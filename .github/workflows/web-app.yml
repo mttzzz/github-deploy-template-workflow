@@ -7,7 +7,7 @@ on:
         required: true
         type: string
       params:
-        description: 'Serialized JSON string of parameters for Helm Chart'
+        description: 'Parameters for Helm Chart'
         required: false
         type: string
 
@@ -30,7 +30,8 @@ on:
       BUILD_ARGS:
           required: false
       PARAMS:
-          required: false      
+          description: 'Parameters for Helm Chart'
+          required: false   
        
 
 
