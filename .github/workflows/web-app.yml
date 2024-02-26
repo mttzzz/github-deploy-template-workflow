@@ -28,7 +28,9 @@ on:
       TELEGRAM_CHAT_ID:
           required: true  
       BUILD_ARGS:
-            required: false      
+            required: false
+      SECRET_ENVS:
+              required: false      
        
 
 
@@ -73,7 +75,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: ${{ secrets.BUILD_ARGS }}
-          secret-envs:  ${{ secrets.BUILD_ENVS }}
+          secret-envs:  ${{ secrets.SECRET_ENVS }}
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache-new  
 
