@@ -29,8 +29,8 @@ on:
           required: true  
       BUILD_ARGS:
             required: false
-      SECRET_ENVS:
-              required: false      
+      PARAMS:
+            required: false      
        
 
 
@@ -75,7 +75,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: ${{ secrets.BUILD_ARGS }}
-          secret-envs:  ${{ secrets.SECRET_ENVS }}
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache-new  
 
@@ -98,14 +97,23 @@ jobs:
         
       - name: Deploy to Kubernetes with Helm
         run: |
-            PARAMS_STR="${{ inputs.params }}"
-            echo "Decoding params: $PARAMS_STR"
-            PARAMS=$(echo "$PARAMS_STR" | grep -v '^\s*$' | awk '{print "--set", $0}' ORS=' ')
-            PARAMS="$PARAMS --set app.name=${{ inputs.app_name }} --set app.image=${{ steps.meta.outputs.tags }}"
-            echo "Params for Helm: $PARAMS"
-            helm upgrade ${{ inputs.app_name }} helm_repo/web-app -i $PARAMS 
-
-      
+              # Decode input parameters
+              PARAMS_STR="${{ inputs.params }}"
+              echo "Decoding input params: $PARAMS_STR"
+              INPUT_PARAMS=$(echo "$PARAMS_STR" | grep -v '^\s*$' | awk '{print "--set", $0}' ORS=' ')
+              
+              # Decode secret parameters
+              SECRET_PARAMS_STR="${{secrets.PARAMS}}"
+              echo "Decoding secrets params: $SECRET_PARAMS_STR"
+              SECRET_PARAMS=$(echo "$SECRET_PARAMS_STR" | grep -v '^\s*$' | awk '{print "--set", $0}' ORS=' ')
+              
+              # Combine input and secret parameters
+              FULL_PARAMS="$INPUT_PARAMS $SECRET_PARAMS --set app.name=${{ inputs.app_name }} --set app.image=${{ steps.meta.outputs.tags }}"
+              
+              echo "Full Params for Helm: $FULL_PARAMS"
+              
+              # Deploy using Helm
+              helm upgrade ${{ inputs.app_name }} helm_repo/web-app -i $FULL_PARAMS
       
       - name: Send Failure Telegram Message
         if: failure()
