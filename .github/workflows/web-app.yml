@@ -102,33 +102,33 @@ jobs:
         
       - name: Deploy to Kubernetes with Helm
         run: |
-              # Decode input parameters
-              PARAMS_STR="${{ inputs.params }}"
-              echo "Decoding input params: $PARAMS_STR"
-              IFS=$'\n' read -r -d '' -a lines <<< "$PARAMS_STR"
+              # Function to process parameters and append to INPUT_PARAMS
+              process_params() {
+                local PARAMS_STR="$1"
+                echo "Decoding params: $PARAMS_STR"
+                IFS=$'\n' read -r -d '' -a lines <<< "$PARAMS_STR"
+                for line in "${lines[@]}"; do
+                  if [[ ! -z "$line" ]]; then
+                    INPUT_PARAMS+=" --set $line"
+                  fi
+                done
+              }
+      
+              # Initialize INPUT_PARAMS
               INPUT_PARAMS=""
-              for line in "${lines[@]}"; do
-                if [[ ! -z "$line" ]]; then
-                  INPUT_PARAMS+=" --set $line"
-                fi
-              done
+      
+              # Decode input parameters
+              process_params "${{ inputs.params }}"
       
               # Decode secret parameters
-              SECRET_PARAMS_STR="${{ secrets.PARAMS }}"
-              echo "Decoding secrets params: $SECRET_PARAMS_STR"
-              IFS=$'\n' read -r -d '' -a secret_lines <<< "$SECRET_PARAMS_STR"
-              for line in "${secret_lines[@]}"; do
-                if [[ ! -z "$line" ]]; then
-                  INPUT_PARAMS+=" --set $line"
-                fi
-              done
+              process_params "${{ secrets.PARAMS }}"
       
-              # Combine input and secret parameters
+              # Combine input and secret parameters with app name and image
               FULL_PARAMS="$INPUT_PARAMS --set app.name=\"${{ inputs.app_name }}\" --set app.image=\"${{ steps.meta.outputs.tags }}\""
               
               echo "Full Params for Helm: $FULL_PARAMS"
               
-              # Deploy using Helm without eval
+              # Deploy using Helm
               helm upgrade ${{ inputs.app_name }} helm_repo/${{ inputs.helm_chart }} -i $FULL_PARAMS
       
       - name: Send Failure Telegram Message
