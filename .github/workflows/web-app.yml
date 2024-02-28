@@ -102,20 +102,23 @@ jobs:
         
       - name: Deploy to Kubernetes with Helm
         run: |
+              # Initialize INPUT_PARAMS
+              INPUT_PARAMS=""
+      
               # Function to process parameters and append to INPUT_PARAMS
               process_params() {
                 local PARAMS_STR="$1"
                 echo "Decoding params: $PARAMS_STR"
-                IFS=$'\n' read -r -d '' -a lines <<< "$PARAMS_STR"
+                IFS=$'\n' read -r -d '' -a lines <<< "$PARAMS_STR" || true
                 for line in "${lines[@]}"; do
                   if [[ ! -z "$line" ]]; then
-                    INPUT_PARAMS+=" --set $line"
+                    # Ensure values are correctly quoted
+                    key=$(echo $line | cut -d'=' -f1)
+                    value=$(echo $line | cut -d'=' -f2-)
+                    INPUT_PARAMS+=" --set $key=\"$value\""
                   fi
                 done
               }
-      
-              # Initialize INPUT_PARAMS
-              INPUT_PARAMS=""
       
               # Decode input parameters
               process_params "${{ inputs.params }}"
@@ -129,7 +132,8 @@ jobs:
               echo "Full Params for Helm: $FULL_PARAMS"
               
               # Deploy using Helm
-              helm upgrade ${{ inputs.app_name }} helm_repo/${{ inputs.helm_chart }} -i $FULL_PARAMS
+              helm upgrade ${{ inputs.app_name }} helm_repo/${{ inputs.helm_chart }} -i $FULL_PARAMS || exit 1
+      
       
       - name: Send Failure Telegram Message
         if: failure()
