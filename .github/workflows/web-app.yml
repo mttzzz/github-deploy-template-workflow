@@ -6,6 +6,10 @@ on:
       app_name:
         required: true
         type: string
+        default: 'web-app'
+      helm_chart:
+        required: false
+        type: string
       params:
         description: 'Parameters for Helm Chart'
         required: false
@@ -114,7 +118,7 @@ jobs:
               echo "Full Params for Helm: $FULL_PARAMS"
               
               # Deploy using Helm
-              helm upgrade ${{ inputs.app_name }} helm_repo/web-app -i $FULL_PARAMS
+              helm upgrade ${{ inputs.app_name }} helm_repo/${{ inputs.helm_chart }} -i $FULL_PARAMS
       
       - name: Send Failure Telegram Message
         if: failure()
