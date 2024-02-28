@@ -10,6 +10,7 @@ on:
       helm_chart:
         required: false
         type: string
+        default: 'web-app'
       params:
         description: 'Parameters for Helm Chart'
         required: false
