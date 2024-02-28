@@ -105,20 +105,20 @@ jobs:
               # Decode input parameters
               PARAMS_STR="${{ inputs.params }}"
               echo "Decoding input params: $PARAMS_STR"
-              INPUT_PARAMS=$(echo "$PARAMS_STR" | grep -v '^\s*$' | awk '{print "--set", $0}' ORS=' ')
+              INPUT_PARAMS=$(echo "$PARAMS_STR" | grep -v '^\s*$' | sed 's/=/="/;s/$/"/' | awk '{print "--set", $0}' ORS=' ')
               
               # Decode secret parameters
-              SECRET_PARAMS_STR="${{secrets.PARAMS}}"
+              SECRET_PARAMS_STR="${{ secrets.PARAMS }}"
               echo "Decoding secrets params: $SECRET_PARAMS_STR"
-              SECRET_PARAMS=$(echo "$SECRET_PARAMS_STR" | grep -v '^\s*$' | awk '{print "--set", $0}' ORS=' ')
+              SECRET_PARAMS=$(echo "$SECRET_PARAMS_STR" | grep -v '^\s*$' | sed 's/=/="/;s/$/"/' | awk '{print "--set", $0}' ORS=' ')
               
               # Combine input and secret parameters
-              FULL_PARAMS="$INPUT_PARAMS $SECRET_PARAMS --set app.name=${{ inputs.app_name }} --set app.image=${{ steps.meta.outputs.tags }}"
+              FULL_PARAMS="$INPUT_PARAMS $SECRET_PARAMS --set app.name=\"${{ inputs.app_name }}\" --set app.image=\"${{ steps.meta.outputs.tags }}\""
               
               echo "Full Params for Helm: $FULL_PARAMS"
               
-              # Deploy using Helm
-              helm upgrade ${{ inputs.app_name }} helm_repo/${{ inputs.helm_chart }} -i $FULL_PARAMS
+              # Use eval to correctly handle spaces and quotes in parameters
+              eval "helm upgrade ${{ inputs.app_name }} helm_repo/${{ inputs.helm_chart }} -i $FULL_PARAMS"
       
       - name: Send Failure Telegram Message
         if: failure()
