@@ -102,38 +102,39 @@ jobs:
         
       - name: Deploy to Kubernetes with Helm
         run: |
-          # Initialize INPUT_PARAMS
-          INPUT_PARAMS=""
+              # Initialize INPUT_PARAMS
+              INPUT_PARAMS=""
+      
+              # Function to process parameters and append to INPUT_PARAMS
+              process_params() {
+                local PARAMS_STR="$1"
+                echo "Decoding params: $PARAMS_STR"
+                IFS=$'\n' read -r -d '' -a lines <<< "$PARAMS_STR" || true
+                for line in "${lines[@]}"; do
+                  if [[ ! -z "$line" ]]; then
+                    # Extract key and value preserving inner quotes
+                    key=$(echo $line | cut -d'=' -f1)
+                    value=$(echo $line | cut -d'=' -f2- | sed 's/^"\(.*\)"$/\1/')
+                    # Append parameter ensuring outer quotes are correctly placed
+                    INPUT_PARAMS+=" --set ${key}=\"${value}\""
+                  fi
+                done
+              }
 
-          # Function to process parameters and append to INPUT_PARAMS
-          process_params() {
-            local PARAMS_STR="$1"
-            echo "Decoding params: $PARAMS_STR"
-            IFS=$'\n' read -r -d '' -a lines <<< "$PARAMS_STR" || true
-            for line in "${lines[@]}"; do
-              if [[ ! -z "$line" ]]; then
-                # Extract key and value
-                IFS='=' read -r key value <<< "$line"
-                # Reconstruct the line with proper quoting
-                INPUT_PARAMS+=" --set ${key}=${value}"
-              fi
-            done
-          }
-
-          # Decode input parameters
-          process_params "env.schedule=\"0 * * * *\""
-
-          # Decode secret parameters
-          process_params "***"
-
-          # Combine input and secret parameters with app name and image
-          FULL_PARAMS="$INPUT_PARAMS --set app.name=\"cron-job-futurepedia-scrap\" --set app.image=\"***/***/cron-job-scrap-futurepedia:f659f10\""
-
-          echo "Full Params for Helm: $FULL_PARAMS"
-
-          # Deploy using Helm
-          helm upgrade cron-job-futurepedia-scrap helm_repo/cron-job-app -i $FULL_PARAMS || exit 1
-
+      
+              # Decode input parameters
+              process_params "${{ inputs.params }}"
+      
+              # Decode secret parameters
+              process_params "${{ secrets.PARAMS }}"
+      
+              # Combine input and secret parameters with app name and image
+              FULL_PARAMS="$INPUT_PARAMS --set app.name=\"${{ inputs.app_name }}\" --set app.image=\"${{ steps.meta.outputs.tags }}\""
+              
+              echo "Full Params for Helm: $FULL_PARAMS"
+              
+              # Deploy using Helm
+              helm upgrade ${{ inputs.app_name }} helm_repo/${{ inputs.helm_chart }} -i $FULL_PARAMS || exit 1
       
       
       - name: Send Failure Telegram Message
