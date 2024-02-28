@@ -102,56 +102,23 @@ jobs:
         
       - name: Deploy to Kubernetes with Helm
         run: |
-              # Initialize INPUT_PARAMS
-              INPUT_PARAMS=""
-      
-              # Function to process parameters and append to INPUT_PARAMS
-              process_params() {
-                local PARAMS_STR="$1"
-                echo "Original params string: '$PARAMS_STR'"
-
-                IFS=$'\n' read -r -d '' -a lines <<< "$PARAMS_STR" || true
-                echo "Decoded lines from params string: ${#lines[@]}"
-
-                for i in "${!lines[@]}"; do
-                  line="${lines[$i]}"
-                  echo "Processing line $((i + 1)): '$line'"
-
-                  if [[ ! -z "$line" ]]; then
-                    key=$(echo "$line" | cut -d'=' -f1)
-                    value=$(echo "$line" | cut -d'=' -f2-)
-
-                    echo "Extracted key: '$key'"
-                    echo "Extracted value before trimming: '$value'"
-
-                    # Trim quotes if they exist
-                    trimmed_value=$(echo "$value" | sed -e 's/^"//' -e 's/"$//')
-                    echo "Trimmed value: '$trimmed_value'"
-
-                    # Append parameter ensuring outer quotes are correctly placed
-                    INPUT_PARAMS+=" --set ${key}=\"${trimmed_value}\""
-                    echo "Current INPUT_PARAMS: '$INPUT_PARAMS'"
-                  fi
-                done
-
-                echo "Final INPUT_PARAMS: '$INPUT_PARAMS'"
-              }
-
-      
               # Decode input parameters
-              process_params "${{ inputs.params }}"
-      
+              PARAMS_STR="${{ inputs.params }}"
+              echo "Decoding input params: $PARAMS_STR"
+              INPUT_PARAMS=$(echo "$PARAMS_STR" | grep -v '^\s*$' | awk '{print "--set", $0}' ORS=' ')
+              
               # Decode secret parameters
-              process_params "${{ secrets.PARAMS }}"
-      
-              # Combine input and secret parameters with app name and image
-              FULL_PARAMS="$INPUT_PARAMS --set app.name=\"${{ inputs.app_name }}\" --set app.image=\"${{ steps.meta.outputs.tags }}\""
+              SECRET_PARAMS_STR="${{secrets.PARAMS}}"
+              echo "Decoding secrets params: $SECRET_PARAMS_STR"
+              SECRET_PARAMS=$(echo "$SECRET_PARAMS_STR" | grep -v '^\s*$' | awk '{print "--set", $0}' ORS=' ')
+              
+              # Combine input and secret parameters
+              FULL_PARAMS="$INPUT_PARAMS $SECRET_PARAMS --set app.name=${{ inputs.app_name }} --set app.image=${{ steps.meta.outputs.tags }}"
               
               echo "Full Params for Helm: $FULL_PARAMS"
               
               # Deploy using Helm
-              helm upgrade ${{ inputs.app_name }} helm_repo/${{ inputs.helm_chart }} -i $FULL_PARAMS || exit 1
-      
+              helm upgrade ${{ inputs.app_name }} helm_repo/${{ inputs.helm_chart }} -i $FULL_PARAMS
       
       - name: Send Failure Telegram Message
         if: failure()
