@@ -108,17 +108,33 @@ jobs:
               # Function to process parameters and append to INPUT_PARAMS
               process_params() {
                 local PARAMS_STR="$1"
-                echo "Decoding params: $PARAMS_STR"
+                echo "Original params string: '$PARAMS_STR'"
+
                 IFS=$'\n' read -r -d '' -a lines <<< "$PARAMS_STR" || true
-                for line in "${lines[@]}"; do
+                echo "Decoded lines from params string: ${#lines[@]}"
+
+                for i in "${!lines[@]}"; do
+                  line="${lines[$i]}"
+                  echo "Processing line $((i + 1)): '$line'"
+
                   if [[ ! -z "$line" ]]; then
-                    # Extract key and value preserving inner quotes
-                    key=$(echo $line | cut -d'=' -f1)
-                    value=$(echo $line | cut -d'=' -f2- | sed 's/^"\(.*\)"$/\1/')
+                    key=$(echo "$line" | cut -d'=' -f1)
+                    value=$(echo "$line" | cut -d'=' -f2-)
+
+                    echo "Extracted key: '$key'"
+                    echo "Extracted value before trimming: '$value'"
+
+                    # Trim quotes if they exist
+                    trimmed_value=$(echo "$value" | sed -e 's/^"//' -e 's/"$//')
+                    echo "Trimmed value: '$trimmed_value'"
+
                     # Append parameter ensuring outer quotes are correctly placed
-                    INPUT_PARAMS+=" --set ${key}=\"${value}\""
+                    INPUT_PARAMS+=" --set ${key}=\"${trimmed_value}\""
+                    echo "Current INPUT_PARAMS: '$INPUT_PARAMS'"
                   fi
                 done
+
+                echo "Final INPUT_PARAMS: '$INPUT_PARAMS'"
               }
 
       
