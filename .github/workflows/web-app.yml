@@ -86,22 +86,22 @@ jobs:
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache-new  
 
-      # - name: Install doctl
-      #   uses: digitalocean/action-doctl@v2
-      #   with:
-      #     token: ${{ secrets.DO_TOKEN }}
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_TOKEN }}
 
-      # - name: Save the Kubernetes configuration
-      #   run: doctl kubernetes cluster kubeconfig save main
+      - name: Save the Kubernetes configuration
+        run: doctl kubernetes cluster kubeconfig save main
 
-      - name: Setup Kubeconfig
-        run: |
-          mkdir -p /home/runner/.kube
-          echo "${{ secrets.KUBECONFIG }}" | base64 -d > /home/runner/.kube/config
-          chmod 600 /home/runner/.kube/config
+      # - name: Setup Kubeconfig
+      #   run: |
+      #     mkdir -p /home/runner/.kube
+      #     echo "${{ secrets.KUBECONFIG }}" | base64 -d > /home/runner/.kube/config
+      #     chmod 600 /home/runner/.kube/config
 
-      - name: Check kubectl configuration
-        run: kubectl config use-context do-fra1-main
+      # - name: Check kubectl configuration
+      #   run: kubectl config use-context do-fra1-main
 
       - name: Install Helm
         uses: Azure/setup-helm@v4.0.0
