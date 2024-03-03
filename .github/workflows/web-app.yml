@@ -95,6 +95,7 @@ jobs:
       - name: Setup Kubeconfig
         run: |
           echo "${{ secrets.KUBECONFIG }}" | base64 -d > kubeconfig
+          echo kubeconfig
           chmod 600 kubeconfig
           echo "KUBECONFIG=${{ github.workspace }}/kubeconfig" >> $GITHUB_ENV
 
