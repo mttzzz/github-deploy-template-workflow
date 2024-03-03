@@ -92,7 +92,7 @@ jobs:
           token: ${{ secrets.DO_TOKEN }}
 
       - name: Save the Kubernetes configuration
-        run: doctl kubernetes cluster kubeconfig save main
+        run: doctl kubernetes cluster kubeconfig save do-fra1-main
 
       # - name: Setup Kubeconfig
       #   run: |
