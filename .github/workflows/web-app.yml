@@ -98,11 +98,10 @@ jobs:
         run: |
           mkdir -p /home/runner/.kube
           echo "${{ secrets.KUBECONFIG }}" | base64 -d > /home/runner/.kube/config
-          cat /home/runner/.kube/config
           chmod 600 /home/runner/.kube/config
 
       - name: Check kubectl configuration
-        run: kubectl config use-context main
+        run: kubectl config use-context do-fra1-main
 
       - name: Install Helm
         uses: Azure/setup-helm@v4.0.0
