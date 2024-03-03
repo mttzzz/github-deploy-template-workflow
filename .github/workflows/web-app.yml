@@ -18,6 +18,8 @@ on:
 
 
     secrets:
+      KUBECONFIG:
+        required: true
       HELM_REPO:
         required: true
       REGISTRY_NAME:
@@ -96,7 +98,7 @@ jobs:
         run: |
           mkdir -p /home/runner/.kube
           echo "${{ secrets.KUBECONFIG }}" | base64 -d > /home/runner/.kube/config
-          echo /home/runner/.kube/config
+          cat /home/runner/.kube/config
           chmod 600 /home/runner/.kube/config
 
       - name: Check kubectl configuration
