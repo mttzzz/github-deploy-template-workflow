@@ -95,6 +95,7 @@ jobs:
       - name: Setup Kubeconfig
         run: |
           echo "${{ secrets.KUBECONFIG }}" > ${{ github.workspace }}/kubeconfig
+          chmod 600 kubeconfig
           echo "KUBECONFIG=${{ github.workspace }}/kubeconfig" >> $GITHUB_ENV
 
       - name: Install Helm
