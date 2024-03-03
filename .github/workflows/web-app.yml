@@ -94,9 +94,12 @@ jobs:
 
       - name: Setup Kubeconfig
         run: |
-          echo "${{ secrets.KUBECONFIG }}" > ${{ github.workspace }}/kubeconfig
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > kubeconfig
           chmod 600 kubeconfig
           echo "KUBECONFIG=${{ github.workspace }}/kubeconfig" >> $GITHUB_ENV
+
+      - name: Check kubectl configuration
+        run: kubectl config use-context main
 
       - name: Install Helm
         uses: Azure/setup-helm@v4.0.0
