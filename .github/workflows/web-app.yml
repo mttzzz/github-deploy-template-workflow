@@ -82,9 +82,9 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: ${{ secrets.BUILD_ARGS }}
-          cache-from: type=registry,ref=myregistry.com/myimage:buildcache
-          cache-to: type=registry,dest=myregistry.com/myimage:buildcache,mode=max
-
+          cache-from: type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache
+          cache-to: type=registry,dest=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache,mode=max
+          
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
         with:
