@@ -82,8 +82,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: ${{ secrets.BUILD_ARGS }}
-          cache-from: type=registry,ref=registry.pushka.biz/${{ github.repository }}:buildcache
-          cache-to: type=registry,dest=registry.pushka.biz/${{ github.repository }}:buildcache,mode=max
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
           
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
