@@ -35,7 +35,7 @@ on:
       BUILD_ARGS:
           required: false
       PARAMS:
-          description: 'Parameters for Helm Chart'
+          description: 'Parameters for Helm Chart!'
           required: false   
        
 
@@ -61,9 +61,10 @@ jobs:
         uses: actions/cache@v4.0.0
         with:
             path: /tmp/.buildx-cache
-            key: ${{ runner.os }}-buildx-${{ github.sha }}
+            key: ${{ runner.os }}-buildx-composer-${{ hashFiles('**/composer.lock', '**/composer.json') }}
+
             restore-keys: |
-              ${{ runner.os }}-buildx-
+              ${{ runner.os }}-buildx-composer-
       
       - name: Extract metadata (tags, labels) for Docker
         id: meta        
@@ -81,9 +82,9 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: ${{ secrets.BUILD_ARGS }}
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache-new  
-
+          cache-from: type=registry,ref=registry.pushka.biz/${{ github.repository }}:buildcache
+          cache-to: type=registry,dest=registry.pushka.biz/${{ github.repository }}:buildcache,mode=max
+          
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
         with:
