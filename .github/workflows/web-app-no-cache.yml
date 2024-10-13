@@ -71,7 +71,7 @@ jobs:
         with:
           images: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}
           tags: |
-           type=sha,format=short,prefix=          
+           type=raw,value=latest   
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -120,6 +120,9 @@ jobs:
               
               # Deploy using Helm
               helm upgrade ${{ inputs.app_name }} helm_repo/${{ inputs.helm_chart }} -i $FULL_PARAMS
+
+              # Restart the deployment to ensure pods are updated
+              kubectl rollout restart deployment ${{ inputs.app_name }}
       
       - name: Send Failure Telegram Message
         if: failure()
