@@ -93,7 +93,7 @@ jobs:
         with:
           images: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}
           tags: |
-           type=sha,format=short,prefix=          
+           type=raw,value=latest         
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
