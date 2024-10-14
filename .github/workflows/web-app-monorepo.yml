@@ -1,0 +1,148 @@
+name: deploy template
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        required: true
+        type: string
+        default: 'web-app'
+      helm_chart:
+        required: false
+        type: string
+        default: 'web-app'
+      params:
+        description: 'Parameters for Helm Chart'
+        required: false
+        type: string
+      dockerfile_directory:
+        description: 'Directory where Dockerfile is located'
+        required: true
+        type: string
+
+    secrets:
+      HELM_REPO:
+        required: true
+      REGISTRY_NAME:
+        required: true
+      REGISTRY_USERNAME:
+        required: true
+      REGISTRY_PASSWORD:
+        required: true  
+      DO_TOKEN:
+        required: true  
+      TELEGRAM_TOKEN:
+        required: true  
+      TELEGRAM_CHAT_ID:
+        required: true  
+      BUILD_ARGS:
+        required: false
+      PARAMS:
+        description: 'Parameters for Helm Chart!'
+        required: false   
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout deploying repository
+        uses: actions/checkout@v4
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.REGISTRY_NAME }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta        
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}
+          tags: |
+           type=raw,value=latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.dockerfile_directory }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: ${{ secrets.BUILD_ARGS }}
+          cache-from: type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache
+          cache-to: type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache,mode=max
+          
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_TOKEN }}
+
+      - name: Save the Kubernetes configuration
+        run: doctl kubernetes cluster kubeconfig save main
+
+      - name: Install Helm
+        uses: Azure/setup-helm@v4.0.0
+
+      - name: Login to Helm Repository 
+        run: helm repo add --username ${{ secrets.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_PASSWORD }} helm_repo ${{ secrets.HELM_REPO }}/
+      
+      - name: Update Helm Repository 
+        run: helm repo update helm_repo
+        
+      - name: Deploy to Kubernetes with Helm
+        run: |
+              # Decode input parameters
+              PARAMS_STR="${{ inputs.params }}"
+              echo "Decoding input params: $PARAMS_STR"
+              INPUT_PARAMS=$(echo "$PARAMS_STR" | grep -v '^\s*$' | awk '{print "--set", $0}' ORS=' ')
+              
+              # Decode secret parameters
+              SECRET_PARAMS_STR="${{ secrets.PARAMS }}"
+              echo "Decoding secrets params: $SECRET_PARAMS_STR"
+              SECRET_PARAMS=$(echo "$SECRET_PARAMS_STR" | grep -v '^\s*$' | awk '{print "--set", $0}' ORS=' ')
+              
+              # Combine input and secret parameters
+              FULL_PARAMS="$INPUT_PARAMS $SECRET_PARAMS --set app.name=${{ inputs.app_name }} --set app.image=${{ steps.meta.outputs.tags }}"
+              
+              echo "Full Params for Helm: $FULL_PARAMS"
+              
+              # Deploy using Helm
+              helm upgrade ${{ inputs.app_name }} helm_repo/${{ inputs.helm_chart }} -i $FULL_PARAMS
+              
+              # Restart the deployment to ensure pods are updated
+              kubectl rollout restart deployment ${{ inputs.app_name }}
+      
+      - name: Send Failure Telegram Message
+        if: failure()
+        uses: appleboy/telegram-action@master
+        with:
+              token: ${{ secrets.TELEGRAM_TOKEN }}
+              to: ${{ secrets.TELEGRAM_CHAT_ID }}
+              format: markdown
+              message: |
+                🚨 *Deployment Failed* 🚨
+    
+                *${{ github.actor }}* encountered an error deploying to Kubernetes. Please check the GitHub Actions logs for more details.⚠️
+    
+                *Repository:* `${{ github.repository }}`
+                *Commit Message:* 🔗[${{ github.event.head_commit.message }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+                *Check the logs for details:* 🔗[Action Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+  
+      - name: Send Success Telegram Message
+        if: success()
+        uses: appleboy/telegram-action@master
+        with:
+              token: ${{ secrets.TELEGRAM_TOKEN }}
+              to: ${{ secrets.TELEGRAM_CHAT_ID }}
+              format: markdown 
+              message: |
+                *${{ github.actor }}* deployed some fresh code!🚀
+  
+                *Repository:* `${{ github.repository }}`   
+                *Commit Message:* 🔗[${{ github.event.head_commit.message }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+                *Check the logs for details:* 🔗[Action Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
