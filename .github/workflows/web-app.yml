@@ -37,7 +37,7 @@ on:
       GIT_TOKEN:
           required: false
       PARAMS:
-          description: 'Parameters for Helm Chart!'
+          description: 'Parameters for Helm Chart!!'
           required: false   
        
 
