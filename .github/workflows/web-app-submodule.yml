@@ -15,31 +15,32 @@ on:
         description: 'Parameters for Helm Chart'
         required: false
         type: string
-      dockerfile_directory:
-        description: 'Directory where Dockerfile is located'
-        required: true
-        type: string
+
 
     secrets:
       HELM_REPO:
         required: true
       REGISTRY_NAME:
-        required: true
+          required: true
       REGISTRY_USERNAME:
         required: true
       REGISTRY_PASSWORD:
-        required: true  
+          required: true  
       DO_TOKEN:
-        required: true  
+          required: true  
       TELEGRAM_TOKEN:
-        required: true  
+          required: true  
       TELEGRAM_CHAT_ID:
-        required: true  
+          required: true  
       BUILD_ARGS:
-        required: false
+          required: false
+      GIT_TOKEN:
+          required: false
       PARAMS:
-        description: 'Parameters for Helm Chart!'
-        required: false   
+          description: 'Parameters for Helm Chart!'
+          required: false   
+       
+
 
 jobs:
   build-and-deploy:
@@ -47,11 +48,14 @@ jobs:
     steps:
       - name: Checkout deploying repository
         uses: actions/checkout@v4
+        with:
+          submodules: true
+          token: ${{ secrets.GIT_TOKEN }}
 
       - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
-          registry: ${{ secrets.REGISTRY_NAME }}
+          registry: ${{ secrets.REGISTRY_NAME}}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
@@ -69,7 +73,7 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: ${{ inputs.dockerfile_directory }}
+          context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -89,7 +93,7 @@ jobs:
         uses: Azure/setup-helm@v4.0.0
 
       - name: Login to Helm Repository 
-        run: helm repo add --username ${{ secrets.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_PASSWORD }} helm_repo ${{ secrets.HELM_REPO }}/
+        run: helm repo add --username ${{ secrets.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_PASSWORD }} helm_repo ${{secrets.HELM_REPO}}/
       
       - name: Update Helm Repository 
         run: helm repo update helm_repo
@@ -102,7 +106,7 @@ jobs:
               INPUT_PARAMS=$(echo "$PARAMS_STR" | grep -v '^\s*$' | awk '{print "--set", $0}' ORS=' ')
               
               # Decode secret parameters
-              SECRET_PARAMS_STR="${{ secrets.PARAMS }}"
+              SECRET_PARAMS_STR="${{secrets.PARAMS}}"
               echo "Decoding secrets params: $SECRET_PARAMS_STR"
               SECRET_PARAMS=$(echo "$SECRET_PARAMS_STR" | grep -v '^\s*$' | awk '{print "--set", $0}' ORS=' ')
               
