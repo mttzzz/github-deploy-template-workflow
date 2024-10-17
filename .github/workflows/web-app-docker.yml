@@ -83,7 +83,7 @@ jobs:
               SECRET_PARAMS=$(echo "$SECRET_PARAMS_STR" | grep -v '^\s*$' | awk '{print "--set", $0}' ORS=' ')
               
               # Combine input and secret parameters
-              FULL_PARAMS="$INPUT_PARAMS $SECRET_PARAMS --set app.name=${{ inputs.app_name }} --set app.image=${{ inputs.docker_image }}"
+              FULL_PARAMS="$INPUT_PARAMS $SECRET_PARAMS --set app.name=${{ inputs.app_name }} --set app.image=${{secrets.REGISTRY_NAME}}/mttzzz/${{ inputs.docker_image }}"
               
               echo "Full Params for Helm: $FULL_PARAMS"
               
