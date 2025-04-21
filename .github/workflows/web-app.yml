@@ -117,7 +117,7 @@ jobs:
         run: helm repo update helm_repo
       
       - name: Upload kubeconfig as artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: kubeconfig
           path: ~/.kube/config
@@ -129,7 +129,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download kubeconfig artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: kubeconfig
           path: ~/.kube/
