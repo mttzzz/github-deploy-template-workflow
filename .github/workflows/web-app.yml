@@ -89,15 +89,15 @@ jobs:
           build-args: ${{ secrets.BUILD_ARGS }}
           cache-from: type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache,target-deny-list=build
           cache-to: type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache,mode=max,compression=zstd,compression-level=3,oci-mediatypes=true,push-by-digest=true,target-deny-list=build
-
-  setup-k8s:
+  deploy:
+    needs: [build-docker]
     runs-on: ubuntu-latest
     steps:
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
         with:
           token: ${{ secrets.DO_TOKEN }}
-
+          
       - name: Save the Kubernetes configuration
         run: |
           mkdir -p $HOME/.kube
@@ -108,94 +108,7 @@ jobs:
 
       - name: Login to Helm Repository 
         run: helm repo add --username ${{ secrets.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_PASSWORD }} helm_repo ${{secrets.HELM_REPO}}/
-      
-      - name: Update Helm Repository 
-        run: helm repo update helm_repo
-
-      # Добавляем шаг для проверки и создания директории Helm репозитория
-      - name: Prepare Helm repository for artifact
-        run: |
-          # Проверяем где находится Helm repo cache
-          echo "Helm home directory:"
-          HELM_HOME=$(helm env HELM_REPOSITORY_CACHE)
-          echo "HELM_HOME: $HELM_HOME"
-          
-          # Создаем директории, если их нет
-          mkdir -p ~/.config/helm/repository
-          
-          # Копируем файлы репозитория в директорию, которую мы будем использовать как артефакт
-          if [ -d "$HELM_HOME" ]; then
-            cp -r $HELM_HOME/* ~/.config/helm/repository/ 2>/dev/null || echo "No files to copy"
-          fi
-          
-          # Создаем пустой файл, чтобы директория не была пустой
-          touch ~/.config/helm/repository/.helmrepo
-          
-          echo "Content of helm repository directory:"
-          ls -la ~/.config/helm/repository/
-
-      - name: Upload Helm binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: helm-bin
-          path: /opt/hostedtoolcache/helm
-
-      # Upload kubeconfig for reuse
-      - name: Upload kubeconfig artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: kubeconfig
-          path: $HOME/.kube/config
-
-      # Upload Helm repo cache for reuse
-      - name: Upload Helm repo cache
-        uses: actions/upload-artifact@v4
-        with:
-          name: helm-repo-cache
-          path: $HOME/.config/helm/repository
-
-  deploy:
-    needs: [build-docker, setup-k8s]
-    runs-on: ubuntu-latest
-    steps:
-      # Download kubeconfig from setup-k8s
-      - name: Download kubeconfig artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: kubeconfig
-          path: $HOME/.kube
-
-      # Download Helm repo cache from setup-k8s
-      - name: Download Helm repo cache
-        uses: actions/download-artifact@v4
-        with:
-          name: helm-repo-cache
-          path: $HOME/.config/helm/repository
-
-      - name: Download Helm binary
-        uses: actions/download-artifact@v4
-        with:
-          name: helm-bin
-          path: /opt/hostedtoolcache/helm
-
-      - name: Add Helm to PATH
-        run: echo "/opt/hostedtoolcache/helm/*/x64" >> $GITHUB_PATH
-
-      - name: Verify Helm version
-        run: helm version
-
-      - name: Verify Kubernetes connection
-        run: |
-          # Убедимся, что кластер доступен
-          kubectl config get-contexts
-          kubectl get nodes
-
-      - name: Install Helm
-        uses: Azure/setup-helm@v4.0.0
-
-      - name: Login to Helm Repository 
-        run: helm repo add --username ${{ secrets.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_PASSWORD }} helm_repo ${{secrets.HELM_REPO}}/
-      
+    
       - name: Update Helm Repository 
         run: helm repo update helm_repo
         
