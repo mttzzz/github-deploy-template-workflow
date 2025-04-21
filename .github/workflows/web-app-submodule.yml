@@ -84,10 +84,8 @@ jobs:
           build-args: ${{ secrets.BUILD_ARGS }}
           cache-from: |
             type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache
-            type=inline
           cache-to: |
             type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache,mode=max
-            type=inline
           
       - name: Cache Helm repository
         uses: actions/cache@v3
