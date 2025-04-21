@@ -45,10 +45,11 @@ on:
           required: false   
        
 
-
 jobs:
-  build-and-deploy:
+  build-docker:
     runs-on: ubuntu-latest
+    outputs:
+      docker_tag: ${{ steps.meta.outputs.tags }}
     steps:
       - name: Checkout deploying repository
         uses: actions/checkout@v4
@@ -81,8 +82,32 @@ jobs:
           build-args: ${{ secrets.BUILD_ARGS }}
           cache-from: type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache
           cache-to: type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache,mode=max,compression=zstd,compression-level=3,oci-mediatypes=true,push-by-digest=true
-          
+
+  setup-k8s:
+    runs-on: ubuntu-latest
+    steps:
       - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_TOKEN }}
+
+      - name: Save the Kubernetes configuration
+        run: doctl kubernetes cluster kubeconfig save main
+
+      - name: Install Helm
+        uses: Azure/setup-helm@v4.0.0
+
+      - name: Login to Helm Repository 
+        run: helm repo add --username ${{ secrets.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_PASSWORD }} helm_repo ${{secrets.HELM_REPO}}/
+      
+      - name: Update Helm Repository 
+        run: helm repo update helm_repo
+
+  deploy:
+    needs: [build-docker, setup-k8s]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install doctl (again for this job)
         uses: digitalocean/action-doctl@v2
         with:
           token: ${{ secrets.DO_TOKEN }}
@@ -112,7 +137,7 @@ jobs:
               SECRET_PARAMS=$(echo "$SECRET_PARAMS_STR" | grep -v '^\s*$' | awk '{print "--set", $0}' ORS=' ')
               
               # Combine input and secret parameters
-              FULL_PARAMS="$INPUT_PARAMS $SECRET_PARAMS --set app.name=${{ inputs.app_name }} --set app.image=${{ steps.meta.outputs.tags }}"
+              FULL_PARAMS="$INPUT_PARAMS $SECRET_PARAMS --set app.name=${{ inputs.app_name }} --set app.image=${{ needs.build-docker.outputs.docker_tag }}"
               
               echo "Full Params for Helm: $FULL_PARAMS"
               
@@ -121,9 +146,14 @@ jobs:
               
               # Restart the deployment to ensure pods are updated
               kubectl rollout restart deployment ${{ inputs.app_name }}
-      
+
+  notify:
+    needs: deploy
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
       - name: Send Failure Telegram Message
-        if: failure()
+        if: needs.deploy.result != 'success'
         uses: appleboy/telegram-action@master
         with:
               token: ${{ secrets.TELEGRAM_TOKEN }}
@@ -139,7 +169,7 @@ jobs:
                 *Check the logs for details:* 🔗[Action Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
   
       - name: Send Success Telegram Message
-        if: success()
+        if: needs.deploy.result == 'success'
         uses: appleboy/telegram-action@master
         with:
               token: ${{ secrets.TELEGRAM_TOKEN }}
