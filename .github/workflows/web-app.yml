@@ -148,15 +148,6 @@ jobs:
           kubectl config get-contexts
           kubectl get nodes
 
-      - name: Install Helm
-        uses: Azure/setup-helm@v4.0.0
-
-      - name: Login to Helm Repository 
-        run: helm repo add --username ${{ secrets.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_PASSWORD }} helm_repo ${{secrets.HELM_REPO}}/
-      
-      - name: Update Helm Repository 
-        run: helm repo update helm_repo
-        
       - name: Deploy to Kubernetes with Helm
         run: |
               # Decode input parameters
