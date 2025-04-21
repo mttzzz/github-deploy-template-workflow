@@ -92,6 +92,8 @@ jobs:
 
   setup-k8s:
     runs-on: ubuntu-latest
+    container:
+      image: lachlanevenson/k8s-helm:v3.12.0
     steps:
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
@@ -102,9 +104,6 @@ jobs:
         run: |
           mkdir -p $HOME/.kube
           doctl kubernetes cluster kubeconfig save main
-
-      - name: Install Helm
-        uses: Azure/setup-helm@v4.0.0
 
       - name: Login to Helm Repository 
         run: helm repo add --username ${{ secrets.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_PASSWORD }} helm_repo ${{secrets.HELM_REPO}}/
@@ -128,6 +127,8 @@ jobs:
   deploy:
     needs: [build-docker, setup-k8s]
     runs-on: ubuntu-latest
+    container:
+      image: lachlanevenson/k8s-helm:v3.12.0
     steps:
       # Вместо повтора установки doctl и получения kubeconfig — скачиваем артефакт
       - name: Download kubeconfig artifact
