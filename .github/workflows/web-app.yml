@@ -90,11 +90,13 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: ${{ secrets.BUILD_ARGS }}
-          cache-from: type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache
-          cache-to: type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache,mode=max,compression=zstd,compression-level=3,oci-mediatypes=true,push-by-digest=true
+          cache-from: type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache,target=base,deps,production
+          cache-to: type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache,mode=max,compression=zstd,compression-level=3,oci-mediatypes=true,push-by-digest=true,target=base,deps,production
 
   setup-k8s:
     runs-on: ubuntu-latest
+    outputs:
+      kubeconfig_path: ${{ steps.save_kubeconfig.outputs.kubeconfig_path }}
     steps:
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
@@ -102,7 +104,11 @@ jobs:
           token: ${{ secrets.DO_TOKEN }}
 
       - name: Save the Kubernetes configuration
-        run: doctl kubernetes cluster kubeconfig save main
+        id: save_kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          doctl kubernetes cluster kubeconfig save main
+          echo "kubeconfig_path=$HOME/.kube/config" >> $GITHUB_OUTPUT
 
       - name: Install Helm
         uses: Azure/setup-helm@v4.0.0
@@ -112,18 +118,26 @@ jobs:
       
       - name: Update Helm Repository 
         run: helm repo update helm_repo
+      
+      - name: Upload kubeconfig as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: kubeconfig
+          path: ~/.kube/config
+          retention-days: 1
 
   deploy:
     needs: [build-docker, setup-k8s]
     runs-on: ubuntu-latest
     steps:
-      - name: Install doctl (again for this job)
-        uses: digitalocean/action-doctl@v2
+      - name: Download kubeconfig artifact
+        uses: actions/download-artifact@v3
         with:
-          token: ${{ secrets.DO_TOKEN }}
+          name: kubeconfig
+          path: ~/.kube/
 
-      - name: Save the Kubernetes configuration
-        run: doctl kubernetes cluster kubeconfig save main
+      - name: Set file permissions for kubeconfig
+        run: chmod 600 ~/.kube/config
 
       - name: Install Helm
         uses: Azure/setup-helm@v4.0.0
