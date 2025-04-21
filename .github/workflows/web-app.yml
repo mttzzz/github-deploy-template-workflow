@@ -87,8 +87,8 @@ jobs:
           tags: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:latest
           labels: ${{ steps.meta.outputs.labels }}
           build-args: ${{ secrets.BUILD_ARGS }}
-          cache-from: type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache,target=base,deps,production
-          cache-to: type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache,mode=max,compression=zstd,compression-level=3,oci-mediatypes=true,push-by-digest=true,target=base,deps,production
+          cache-from: type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache,target-deny-list=build
+          cache-to: type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache,mode=max,compression=zstd,compression-level=3,oci-mediatypes=true,push-by-digest=true,target-deny-list=build
 
   setup-k8s:
     runs-on: ubuntu-latest
@@ -122,6 +122,7 @@ jobs:
           name: kubeconfig
           path: ~/.kube/config
           retention-days: 1
+          if-no-files-found: error
 
   deploy:
     needs: [build-docker, setup-k8s]
