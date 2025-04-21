@@ -76,7 +76,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: ${{ secrets.BUILD_ARGS }}
           cache-from: type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache
-          cache-to: type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache,mode=max
+          cache-to: type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache,mode=min,compression=zstd,compression-level=3
           
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
