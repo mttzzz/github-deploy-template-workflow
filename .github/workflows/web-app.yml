@@ -113,13 +113,13 @@ jobs:
 
       # Загружаем kubeconfig и кэш Helm для последующего reuse
       - name: Upload kubeconfig artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: kubeconfig
           path: $HOME/.kube/config
 
       - name: Upload Helm repo cache
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: helm-repo-cache
           path: $HOME/.config/helm/repository
@@ -132,13 +132,13 @@ jobs:
     steps:
       # Вместо повтора установки doctl и получения kubeconfig — скачиваем артефакт
       - name: Download kubeconfig artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: kubeconfig
           path: $HOME/.kube
 
       - name: Download Helm repo cache
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: helm-repo-cache
           path: $HOME/.config/helm/repository
