@@ -92,8 +92,6 @@ jobs:
 
   setup-k8s:
     runs-on: ubuntu-latest
-    container:
-      image: lachlanevenson/k8s-helm:v3.12.0
     steps:
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
@@ -105,19 +103,29 @@ jobs:
           mkdir -p $HOME/.kube
           doctl kubernetes cluster kubeconfig save main
 
+      - name: Install Helm
+        uses: Azure/setup-helm@v4.0.0
+
       - name: Login to Helm Repository 
         run: helm repo add --username ${{ secrets.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_PASSWORD }} helm_repo ${{secrets.HELM_REPO}}/
       
       - name: Update Helm Repository 
         run: helm repo update helm_repo
 
-      # Загружаем kubeconfig и кэш Helm для последующего reuse
+      - name: Upload Helm binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-bin
+          path: /opt/hostedtoolcache/helm
+
+      # Upload kubeconfig for reuse
       - name: Upload kubeconfig artifact
         uses: actions/upload-artifact@v4
         with:
           name: kubeconfig
           path: $HOME/.kube/config
 
+      # Upload Helm repo cache for reuse
       - name: Upload Helm repo cache
         uses: actions/upload-artifact@v4
         with:
@@ -127,21 +135,32 @@ jobs:
   deploy:
     needs: [build-docker, setup-k8s]
     runs-on: ubuntu-latest
-    container:
-      image: lachlanevenson/k8s-helm:latest
     steps:
-      # Вместо повтора установки doctl и получения kubeconfig — скачиваем артефакт
+      # Download kubeconfig from setup-k8s
       - name: Download kubeconfig artifact
         uses: actions/download-artifact@v4
         with:
           name: kubeconfig
           path: $HOME/.kube
 
+      # Download Helm repo cache from setup-k8s
       - name: Download Helm repo cache
         uses: actions/download-artifact@v4
         with:
           name: helm-repo-cache
           path: $HOME/.config/helm/repository
+
+      - name: Download Helm binary
+        uses: actions/download-artifact@v4
+        with:
+          name: helm-bin
+          path: /opt/hostedtoolcache/helm
+
+      - name: Add Helm to PATH
+        run: echo "/opt/hostedtoolcache/helm/*/x64" >> $GITHUB_PATH
+
+      - name: Verify Helm version
+        run: helm version
 
       - name: Verify Kubernetes connection
         run: |
@@ -149,6 +168,15 @@ jobs:
           kubectl config get-contexts
           kubectl get nodes
 
+      - name: Install Helm
+        uses: Azure/setup-helm@v4.0.0
+
+      - name: Login to Helm Repository 
+        run: helm repo add --username ${{ secrets.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_PASSWORD }} helm_repo ${{secrets.HELM_REPO}}/
+      
+      - name: Update Helm Repository 
+        run: helm repo update helm_repo
+        
       - name: Deploy to Kubernetes with Helm
         run: |
               # Decode input parameters
