@@ -100,7 +100,7 @@ jobs:
 
       - name: Save the Kubernetes configuration
         run: |
-          mkdir -p ~/.kube
+          mkdir -p $HOME/.kube
           doctl kubernetes cluster kubeconfig save main
 
       - name: Install Helm
@@ -112,32 +112,47 @@ jobs:
       - name: Update Helm Repository 
         run: helm repo update helm_repo
 
+      # Добавляем шаг для проверки и создания директории Helm репозитория
+      - name: Prepare Helm repository for artifact
+        run: |
+          # Проверяем где находится Helm repo cache
+          echo "Helm home directory:"
+          HELM_HOME=$(helm env HELM_REPOSITORY_CACHE)
+          echo "HELM_HOME: $HELM_HOME"
+          
+          # Создаем директории, если их нет
+          mkdir -p ~/.config/helm/repository
+          
+          # Копируем файлы репозитория в директорию, которую мы будем использовать как артефакт
+          if [ -d "$HELM_HOME" ]; then
+            cp -r $HELM_HOME/* ~/.config/helm/repository/ 2>/dev/null || echo "No files to copy"
+          fi
+          
+          # Создаем пустой файл, чтобы директория не была пустой
+          touch ~/.config/helm/repository/.helmrepo
+          
+          echo "Content of helm repository directory:"
+          ls -la ~/.config/helm/repository/
+
       - name: Upload Helm binary
         uses: actions/upload-artifact@v4
         with:
           name: helm-bin
           path: /opt/hostedtoolcache/helm
 
-      # Убедимся, что каталоги существуют и проверим пути перед загрузкой
-      - name: Prepare artifacts paths
-        run: |
-          echo "Checking paths before upload:"
-          ls -la ~/.kube/
-          mkdir -p ~/.config/helm/repository
-
       # Upload kubeconfig for reuse
       - name: Upload kubeconfig artifact
         uses: actions/upload-artifact@v4
         with:
           name: kubeconfig
-          path: ~/.kube/config
+          path: $HOME/.kube/config
 
       # Upload Helm repo cache for reuse
       - name: Upload Helm repo cache
         uses: actions/upload-artifact@v4
         with:
           name: helm-repo-cache
-          path: ~/.config/helm/repository
+          path: $HOME/.config/helm/repository
 
   deploy:
     needs: [build-docker, setup-k8s]
