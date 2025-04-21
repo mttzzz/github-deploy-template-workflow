@@ -137,6 +137,18 @@ jobs:
       - name: Set file permissions for kubeconfig
         run: chmod 600 ~/.kube/config
 
+      - name: Install doctl for authentication
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_TOKEN }}
+
+      - name: Verify Kubernetes connection
+        run: |
+          # Убедимся, что doctl доступен и kubeconfig правильно настроен
+          doctl kubernetes cluster list
+          kubectl config get-contexts
+          kubectl get nodes
+
       - name: Install Helm
         uses: Azure/setup-helm@v4.0.0
 
