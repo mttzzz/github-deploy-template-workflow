@@ -75,19 +75,16 @@ jobs:
       - name: Export Docker tag safely
         id: export_tag
         run: |
-          # Извлекаем только имя тега без секретных данных
-          IMAGE_TAG="${{ steps.meta.outputs.tags }}"
-          # Получаем только часть после последнего слэша (имя:тег)
-          SAFE_TAG=$(echo "$IMAGE_TAG" | rev | cut -d'/' -f1 | rev)
-          echo "tag=${SAFE_TAG}" >> $GITHUB_OUTPUT
-          echo "Using safe tag format: ${SAFE_TAG}"
+          # Устанавливаем тег "latest" принудительно
+          echo "tag=latest" >> $GITHUB_OUTPUT
+          echo "Using tag: latest"
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:latest
           labels: ${{ steps.meta.outputs.labels }}
           build-args: ${{ secrets.BUILD_ARGS }}
           cache-from: type=registry,ref=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:buildcache,target=base,deps,production
