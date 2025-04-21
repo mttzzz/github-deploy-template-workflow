@@ -49,7 +49,7 @@ jobs:
   build-docker:
     runs-on: ubuntu-latest
     outputs:
-      docker_tag: ${{ steps.meta.outputs.tags }}
+      docker_tag: ${{ steps.export_tag.outputs.tag }}
     steps:
       - name: Checkout deploying repository
         uses: actions/checkout@v4
@@ -71,6 +71,16 @@ jobs:
           images: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}
           tags: |
            type=raw,value=latest
+
+      - name: Export Docker tag safely
+        id: export_tag
+        run: |
+          # Извлекаем только имя тега без секретных данных
+          IMAGE_TAG="${{ steps.meta.outputs.tags }}"
+          # Получаем только часть после последнего слэша (имя:тег)
+          SAFE_TAG=$(echo "$IMAGE_TAG" | rev | cut -d'/' -f1 | rev)
+          echo "tag=${SAFE_TAG}" >> $GITHUB_OUTPUT
+          echo "Using safe tag format: ${SAFE_TAG}"
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -137,7 +147,7 @@ jobs:
               SECRET_PARAMS=$(echo "$SECRET_PARAMS_STR" | grep -v '^\s*$' | awk '{print "--set", $0}' ORS=' ')
               
               # Combine input and secret parameters
-              FULL_PARAMS="$INPUT_PARAMS $SECRET_PARAMS --set app.name=${{ inputs.app_name }} --set app.image=${{ needs.build-docker.outputs.docker_tag }}"
+              FULL_PARAMS="$INPUT_PARAMS $SECRET_PARAMS --set app.name=${{ inputs.app_name }} --set app.image=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:${{ needs.build-docker.outputs.docker_tag }}"
               
               echo "Full Params for Helm: $FULL_PARAMS"
               
