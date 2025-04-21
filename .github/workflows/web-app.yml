@@ -128,7 +128,7 @@ jobs:
     needs: [build-docker, setup-k8s]
     runs-on: ubuntu-latest
     container:
-      image: lachlanevenson/k8s-helm:v3.12.0
+      image: lachlanevenson/k8s-helm:latest
     steps:
       # Вместо повтора установки doctl и получения kubeconfig — скачиваем артефакт
       - name: Download kubeconfig artifact
