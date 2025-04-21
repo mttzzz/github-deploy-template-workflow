@@ -112,19 +112,35 @@ jobs:
       - name: Update Helm Repository 
         run: helm repo update helm_repo
 
+      # Загружаем kubeconfig и кэш Helm для последующего reuse
+      - name: Upload kubeconfig artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: kubeconfig
+          path: $HOME/.kube/config
+
+      - name: Upload Helm repo cache
+        uses: actions/upload-artifact@v3
+        with:
+          name: helm-repo-cache
+          path: $HOME/.config/helm/repository
+
   deploy:
     needs: [build-docker, setup-k8s]
     runs-on: ubuntu-latest
     steps:
-      - name: Install doctl
-        uses: digitalocean/action-doctl@v2
+      # Вместо повтора установки doctl и получения kubeconfig — скачиваем артефакт
+      - name: Download kubeconfig artifact
+        uses: actions/download-artifact@v3
         with:
-          token: ${{ secrets.DO_TOKEN }}
+          name: kubeconfig
+          path: $HOME/.kube
 
-      - name: Save the Kubernetes configuration
-        run: |
-          mkdir -p $HOME/.kube
-          doctl kubernetes cluster kubeconfig save main
+      - name: Download Helm repo cache
+        uses: actions/download-artifact@v3
+        with:
+          name: helm-repo-cache
+          path: $HOME/.config/helm/repository
 
       - name: Verify Kubernetes connection
         run: |
