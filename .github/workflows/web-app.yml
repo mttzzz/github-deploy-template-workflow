@@ -123,14 +123,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kubeconfig
-          path: $HOME/.kube
+          path: $HOME/.kube/config
 
       # Upload Helm repo cache for reuse
       - name: Upload Helm repo cache
         uses: actions/upload-artifact@v4
         with:
           name: helm-repo-cache
-          path: $HOME/.cache/helm/repository
+          path: $HOME/.config/helm/repository
 
   deploy:
     needs: [build-docker, setup-k8s]
@@ -148,7 +148,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: helm-repo-cache
-          path: $HOME/.cache/helm/repository
+          path: $HOME/.config/helm/repository
 
       - name: Download Helm binary
         uses: actions/download-artifact@v4
