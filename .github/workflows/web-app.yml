@@ -19,7 +19,11 @@ on:
         description: 'Parameters for Helm Chart'
         required: false
         type: string
-
+      WITH_SUBMODULES:
+        description: 'Checkout submodules'
+        required: false
+        type: boolean
+        default: false
 
     secrets:
       HELM_REPO:
@@ -53,6 +57,10 @@ jobs:
     steps:
       - name: Checkout deploying repository
         uses: actions/checkout@v4
+        with:
+          submodules: ${{ inputs.WITH_SUBMODULES }}
+          fetch-depth: 1
+          token: ${{ secrets.GIT_TOKEN }}
 
       - name: Log in to Container Registry
         uses: docker/login-action@v3
