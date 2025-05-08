@@ -105,7 +105,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: ${{ secrets.BUILD_ARGS }}
           cache-from: type=s3,region=fra-1,bucket=docker-cache,endpoint_url=https://fra1.digitaloceanspaces.com,name=${{ github.repository }}
-          cache-to: type=s3,region=fra-1,bucket=docker-cache,endpoint_url=https://fra1.digitaloceanspaces.com,name=${{ github.repository }},mode=max
+          cache-to: type=s3,region=fra-1,bucket=docker-cache,endpoint_url=https://fra1.digitaloceanspaces.com,name=${{ github.repository }},mode=min
 
   deploy:
     needs: [build-docker]
