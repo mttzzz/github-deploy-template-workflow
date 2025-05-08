@@ -19,7 +19,7 @@ on:
         description: 'Parameters for Helm Chart'
         required: false
         type: string
-      WITH_SUBMODULES:
+      with_submodules:
         description: 'Checkout submodules'
         required: false
         type: boolean
@@ -58,7 +58,7 @@ jobs:
       - name: Checkout deploying repository
         uses: actions/checkout@v4
         with:
-          submodules: ${{ inputs.WITH_SUBMODULES }}
+          submodules: ${{ inputs.with_submodules }}
           fetch-depth: 1
           token: ${{ secrets.GIT_TOKEN }}
 
