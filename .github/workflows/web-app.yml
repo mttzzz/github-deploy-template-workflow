@@ -114,7 +114,7 @@ jobs:
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
         with:
-          version: '1.144.0'
+          version: '1.142.0'
           token: ${{ secrets.DO_TOKEN }}
           
       - name: Save the Kubernetes configuration
