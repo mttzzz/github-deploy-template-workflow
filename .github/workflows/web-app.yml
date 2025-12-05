@@ -187,7 +187,7 @@ jobs:
         uses: oven-sh/setup-bun@v2
 
       - name: Apply pending migrations to database
-        run: bunx prisma migrate deploy
+        run: bunx prisma migrate deploy --schema=prisma/schema
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
