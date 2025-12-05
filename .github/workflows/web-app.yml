@@ -29,6 +29,11 @@ on:
         required: false
         type: string
         default: 'min'
+      with_prisma_migrations:
+        description: 'Run Prisma migrations before deploy'
+        required: false
+        type: boolean
+        default: false
 
     secrets:
       HELM_REPO:
@@ -55,8 +60,10 @@ on:
           required: true        
       PARAMS:
           description: 'Parameters for Helm Chart!!'
-          required: false   
-       
+          required: false
+      DATABASE_URL:
+          description: 'Database URL for Prisma migrations'
+          required: false
 
 jobs:
   build-docker:
@@ -112,8 +119,30 @@ jobs:
           cache-from: type=s3,region=fra-1,bucket=docker-cache,endpoint_url=https://fra1.digitaloceanspaces.com,name=${{ github.repository }}
           cache-to: type=s3,region=fra-1,bucket=docker-cache,endpoint_url=https://fra1.digitaloceanspaces.com,name=${{ github.repository }},mode=${{ inputs.cache_mode }}
 
-  deploy:
+  migrate:
     needs: [build-docker]
+    if: ${{ inputs.with_prisma_migrations }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: ${{ inputs.with_submodules }}
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Apply pending migrations to database
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+  deploy:
+    needs: [build-docker, migrate]
+    if: ${{ always() && needs.build-docker.result == 'success' && (needs.migrate.result == 'success' || needs.migrate.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - name: Install doctl
@@ -161,11 +190,11 @@ jobs:
 
   notify:
     needs: deploy
-    if: always()
+    if: ${{ always() && needs.deploy.result != 'cancelled' }}
     runs-on: ubuntu-latest
     steps:
       - name: Send Failure Telegram Message
-        if: needs.deploy.result != 'success'
+        if: needs.deploy.result == 'failure'
         uses: appleboy/telegram-action@master
         with:
               token: ${{ secrets.TELEGRAM_TOKEN }}
