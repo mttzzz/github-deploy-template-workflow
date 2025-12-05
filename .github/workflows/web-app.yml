@@ -172,31 +172,8 @@ jobs:
           cache-from: type=s3,region=fra-1,bucket=docker-cache,endpoint_url=https://fra1.digitaloceanspaces.com,name=${{ github.repository }}
           cache-to: type=s3,region=fra-1,bucket=docker-cache,endpoint_url=https://fra1.digitaloceanspaces.com,name=${{ github.repository }},mode=${{ inputs.cache_mode }}
 
-  migrate:
-    needs: [build-docker]
-    if: ${{ inputs.with_prisma_migrations }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-        with:
-          submodules: ${{ inputs.with_submodules }}
-          token: ${{ secrets.GIT_TOKEN }}
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Install dependencies
-        run: bun install 
-
-      - name: Apply pending migrations to database
-        run: bunx prisma migrate deploy
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-
   deploy:
-    needs: [build-docker, migrate]
-    if: ${{ always() && needs.build-docker.result == 'success' && (needs.migrate.result == 'success' || needs.migrate.result == 'skipped') }}
+    needs: [build-docker]
     runs-on: ubuntu-latest
     steps:
       - name: Install doctl
@@ -243,27 +220,24 @@ jobs:
               kubectl rollout restart deployment ${{ inputs.app_name }}
 
   notify:
-    needs: [build-docker, migrate, deploy]
+    needs: [build-docker, deploy]
     if: ${{ always() && needs.build-docker.result != 'cancelled' }}
     runs-on: ubuntu-latest
     steps:
       - name: Determine failed step
         id: failed_step
-        if: ${{ needs.build-docker.result == 'failure' || needs.migrate.result == 'failure' || needs.deploy.result == 'failure' }}
+        if: ${{ needs.build-docker.result == 'failure' || needs.deploy.result == 'failure' }}
         run: |
           if [[ "${{ needs.build-docker.result }}" == "failure" ]]; then
             echo "step=🐳 Build Docker" >> $GITHUB_OUTPUT
             echo "job=build-docker" >> $GITHUB_OUTPUT
-          elif [[ "${{ needs.migrate.result }}" == "failure" ]]; then
-            echo "step=🗃️ Prisma Migrate" >> $GITHUB_OUTPUT
-            echo "job=migrate" >> $GITHUB_OUTPUT
           elif [[ "${{ needs.deploy.result }}" == "failure" ]]; then
             echo "step=🚀 Deploy to Kubernetes" >> $GITHUB_OUTPUT
             echo "job=deploy" >> $GITHUB_OUTPUT
           fi
 
       - name: Send Failure Telegram Message
-        if: ${{ needs.build-docker.result == 'failure' || needs.migrate.result == 'failure' || needs.deploy.result == 'failure' }}
+        if: ${{ needs.build-docker.result == 'failure' || needs.deploy.result == 'failure' }}
         uses: appleboy/telegram-action@master
         with:
               token: ${{ secrets.TELEGRAM_TOKEN }}
