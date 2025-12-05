@@ -183,13 +183,11 @@ jobs:
           submodules: ${{ inputs.with_submodules }}
           token: ${{ secrets.GIT_TOKEN }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
 
       - name: Apply pending migrations to database
-        run: npx prisma migrate deploy
+        run: bunx prisma migrate deploy
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
@@ -242,12 +240,27 @@ jobs:
               kubectl rollout restart deployment ${{ inputs.app_name }}
 
   notify:
-    needs: deploy
-    if: ${{ always() && needs.deploy.result != 'cancelled' }}
+    needs: [build-docker, migrate, deploy]
+    if: ${{ always() && needs.build-docker.result != 'cancelled' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Determine failed step
+        id: failed_step
+        if: ${{ needs.build-docker.result == 'failure' || needs.migrate.result == 'failure' || needs.deploy.result == 'failure' }}
+        run: |
+          if [[ "${{ needs.build-docker.result }}" == "failure" ]]; then
+            echo "step=🐳 Build Docker" >> $GITHUB_OUTPUT
+            echo "job=build-docker" >> $GITHUB_OUTPUT
+          elif [[ "${{ needs.migrate.result }}" == "failure" ]]; then
+            echo "step=🗃️ Prisma Migrate" >> $GITHUB_OUTPUT
+            echo "job=migrate" >> $GITHUB_OUTPUT
+          elif [[ "${{ needs.deploy.result }}" == "failure" ]]; then
+            echo "step=🚀 Deploy to Kubernetes" >> $GITHUB_OUTPUT
+            echo "job=deploy" >> $GITHUB_OUTPUT
+          fi
+
       - name: Send Failure Telegram Message
-        if: needs.deploy.result == 'failure'
+        if: ${{ needs.build-docker.result == 'failure' || needs.migrate.result == 'failure' || needs.deploy.result == 'failure' }}
         uses: appleboy/telegram-action@master
         with:
               token: ${{ secrets.TELEGRAM_TOKEN }}
@@ -255,15 +268,18 @@ jobs:
               format: markdown
               message: |
                 🚨 *Deployment Failed* 🚨
+                
+                *Failed Step:* ${{ steps.failed_step.outputs.step }}
     
-                *${{ github.actor }}* encountered an error deploying to Kubernetes. Please check the GitHub Actions logs for more details.⚠️
+                *${{ github.actor }}* encountered an error. Please check the GitHub Actions logs for more details.⚠️
     
                 *Repository:* `${{ github.repository }}`
+                *Branch:* `${{ github.ref_name }}`
                 *Commit Message:* 🔗[${{ github.event.head_commit.message }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
                 *Check the logs for details:* 🔗[Action Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
   
       - name: Send Success Telegram Message
-        if: needs.deploy.result == 'success'
+        if: ${{ needs.deploy.result == 'success' }}
         uses: appleboy/telegram-action@master
         with:
               token: ${{ secrets.TELEGRAM_TOKEN }}
