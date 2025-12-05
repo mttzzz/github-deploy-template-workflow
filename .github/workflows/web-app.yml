@@ -185,6 +185,9 @@ jobs:
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
+        
+      - name: Install dependencies
+        run: bun install --frozen-lockfile  
 
       - name: Apply pending migrations to database
         run: |
