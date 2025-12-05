@@ -29,11 +29,6 @@ on:
         required: false
         type: string
         default: 'min'
-      with_prisma_migrations:
-        description: 'Run Prisma migrations before deploy'
-        required: false
-        type: boolean
-        default: false
 
     secrets:
       HELM_REPO:
@@ -61,9 +56,6 @@ on:
       PARAMS:
           description: 'Parameters for Helm Chart!!'
           required: false
-      DATABASE_URL:
-          description: 'Database URL for Prisma migrations'
-          required: false
 
 jobs:
   validate:
@@ -75,11 +67,6 @@ jobs:
         id: check
         run: |
           ERRORS=""
-          
-          # Check: if with_prisma_migrations is enabled, DATABASE_URL must be provided
-          if [[ "${{ inputs.with_prisma_migrations }}" == "true" && -z "${{ secrets.DATABASE_URL }}" ]]; then
-            ERRORS="${ERRORS}❌ with_prisma_migrations=true, но DATABASE_URL не передан\n"
-          fi
           
           # Check: if with_submodules is enabled, GIT_TOKEN should be provided
           if [[ "${{ inputs.with_submodules }}" == "true" && -z "${{ secrets.GIT_TOKEN }}" ]]; then
