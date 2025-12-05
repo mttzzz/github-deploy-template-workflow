@@ -190,9 +190,7 @@ jobs:
         run: bun install 
 
       - name: Apply pending migrations to database
-        run: |
-          rm -f prisma.config.ts
-          bunx prisma migrate deploy
+        run: bunx prisma migrate deploy
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
