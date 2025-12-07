@@ -276,9 +276,8 @@ jobs:
           *Деплой не запущен. Исправьте конфигурацию и запустите заново.*"
           
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
-            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -d parse_mode="markdown" \
-            -d text="$MESSAGE"
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg chat_id "${{ secrets.TELEGRAM_CHAT_ID }}" --arg text "$MESSAGE" '{chat_id: $chat_id, text: $text, parse_mode: "markdown"}')"
 
       - name: Determine failed step
         id: failed_step
@@ -318,9 +317,8 @@ jobs:
           🔗 [View Logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
-            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -d parse_mode="markdown" \
-            -d text="$MESSAGE"
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg chat_id "${{ secrets.TELEGRAM_CHAT_ID }}" --arg text "$MESSAGE" '{chat_id: $chat_id, text: $text, parse_mode: "markdown"}')"
   
       - name: Send Success Telegram Message
         if: ${{ needs.deploy.result == 'success' }}
@@ -346,13 +344,12 @@ jobs:
           ─────────────────────
           ⏳ *Status:* Waiting for pod...
 
-          🔗 [View Pipeline](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          🔗 [View Action Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           
-          # Отправляем сообщение и сохраняем message_id для последующего редактирования
+          # Отправляем сообщение через JSON (автоматическое экранирование)
           RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
-            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -d parse_mode="markdown" \
-            -d text="$MESSAGE")
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg chat_id "${{ secrets.TELEGRAM_CHAT_ID }}" --arg text "$MESSAGE" '{chat_id: $chat_id, text: $text, parse_mode: "markdown"}')")
           
           MESSAGE_ID=$(echo "$RESPONSE" | jq -r '.result.message_id')
           echo "message_id=$MESSAGE_ID" >> $GITHUB_OUTPUT
@@ -509,14 +506,12 @@ jobs:
           ─────────────────────
           $STATUS_TEXT
 
-          🔗 [View Pipeline](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          🔗 [View Action Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           
-          # Обновляем сообщение в Telegram
+          # Обновляем сообщение в Telegram через JSON (автоматическое экранирование)
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/editMessageText" \
-            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -d message_id="$MESSAGE_ID" \
-            -d parse_mode="markdown" \
-            -d text="$UPDATED_MESSAGE"
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg chat_id "${{ secrets.TELEGRAM_CHAT_ID }}" --arg message_id "$MESSAGE_ID" --arg text "$UPDATED_MESSAGE" '{chat_id: $chat_id, message_id: ($message_id | tonumber), text: $text, parse_mode: "markdown"}')"
           
           echo "Message updated with final status: $FINAL_STATUS"
           
