@@ -413,7 +413,7 @@ jobs:
             
             if [ "$POD_COUNT" -eq 0 ]; then
               echo "No pods found yet, waiting..."
-              sleep 10
+              sleep 5
               continue
             fi
             
@@ -459,8 +459,8 @@ jobs:
               break
             fi
             
-            echo "Waiting 10 seconds..."
-            sleep 10
+            echo "Waiting 5 seconds..."
+            sleep 5
           done
           
           # Формируем обновлённое сообщение
