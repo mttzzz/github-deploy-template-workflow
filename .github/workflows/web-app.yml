@@ -316,6 +316,7 @@ jobs:
   
       - name: Send Success Telegram Message
         if: ${{ needs.deploy.result == 'success' }}
+        id: send_success
         run: |
           MESSAGE="*${{ github.actor }}* deployed some fresh code!🚀
 
@@ -327,9 +328,146 @@ jobs:
           • Prepare K8s: \`${{ needs.prepare-k8s.outputs.duration }}\`
           • Deploy: \`${{ needs.deploy.outputs.duration }}\`
 
+          ⏳ *Container Status:* Starting...
+
           🔗 [Action Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
+          # Отправляем сообщение и сохраняем message_id для последующего редактирования
+          RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
             -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
             -d parse_mode="markdown" \
-            -d text="$MESSAGE"
+            -d text="$MESSAGE")
+          
+          MESSAGE_ID=$(echo "$RESPONSE" | jq -r '.result.message_id')
+          echo "message_id=$MESSAGE_ID" >> $GITHUB_OUTPUT
+          echo "Sent message with ID: $MESSAGE_ID"
+
+      - name: Download k8s bundle for monitoring
+        if: ${{ needs.deploy.result == 'success' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: k8s-bundle
+          path: /tmp/k8s-bundle
+
+      - name: Restore k8s config for monitoring
+        if: ${{ needs.deploy.result == 'success' }}
+        run: |
+          cp -r /tmp/k8s-bundle/kube $HOME/.kube
+          chmod 600 $HOME/.kube/config
+
+      - name: Monitor pod status and update message
+        if: ${{ needs.deploy.result == 'success' }}
+        run: |
+          APP_NAME="${{ inputs.app_name }}"
+          MESSAGE_ID="${{ steps.send_success.outputs.message_id }}"
+          MAX_ATTEMPTS=6  # 6 attempts * 10 seconds = 60 seconds
+          ATTEMPT=0
+          FINAL_STATUS="unknown"
+          ERROR_MESSAGE=""
+          
+          echo "Starting pod monitoring for deployment: $APP_NAME"
+          
+          # Ждём немного чтобы новые поды начали создаваться
+          sleep 5
+          
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "=== Attempt $ATTEMPT/$MAX_ATTEMPTS ==="
+            
+            # Получаем статус подов
+            PODS_JSON=$(kubectl get pods -l app.kubernetes.io/name=$APP_NAME -o json 2>/dev/null || kubectl get pods -l app=$APP_NAME -o json 2>/dev/null || echo '{"items":[]}')
+            
+            # Проверяем количество подов
+            POD_COUNT=$(echo "$PODS_JSON" | jq '.items | length')
+            echo "Found $POD_COUNT pods"
+            
+            if [ "$POD_COUNT" -eq 0 ]; then
+              echo "No pods found yet, waiting..."
+              sleep 10
+              continue
+            fi
+            
+            # Проверяем статусы всех контейнеров
+            # Ищем Running поды с Ready контейнерами
+            READY_PODS=$(echo "$PODS_JSON" | jq '[.items[] | select(.status.phase == "Running") | select(.status.containerStatuses[]?.ready == true)] | length')
+            TOTAL_PODS=$(echo "$PODS_JSON" | jq '.items | length')
+            
+            # Ищем поды с ошибками
+            FAILED_POD=$(echo "$PODS_JSON" | jq -r '.items[] | select(.status.containerStatuses[]?.state.waiting.reason != null) | select(.status.containerStatuses[]?.state.waiting.reason != "ContainerCreating") | .metadata.name' | head -1)
+            
+            if [ -n "$FAILED_POD" ] && [ "$FAILED_POD" != "null" ]; then
+              # Получаем причину ошибки
+              ERROR_REASON=$(echo "$PODS_JSON" | jq -r ".items[] | select(.metadata.name == \"$FAILED_POD\") | .status.containerStatuses[]?.state.waiting.reason" | head -1)
+              ERROR_MSG=$(echo "$PODS_JSON" | jq -r ".items[] | select(.metadata.name == \"$FAILED_POD\") | .status.containerStatuses[]?.state.waiting.message" | head -1)
+              
+              # Получаем логи если контейнер падает
+              if [ "$ERROR_REASON" = "CrashLoopBackOff" ] || [ "$ERROR_REASON" = "Error" ]; then
+                POD_LOGS=$(kubectl logs $FAILED_POD --tail=10 2>/dev/null | tail -5 || echo "Unable to get logs")
+                ERROR_MESSAGE="Reason: $ERROR_REASON
+          Message: $ERROR_MSG
+          
+          Last logs:
+          \`\`\`
+          $POD_LOGS
+          \`\`\`"
+              else
+                ERROR_MESSAGE="Reason: $ERROR_REASON
+          Message: $ERROR_MSG"
+              fi
+              
+              FINAL_STATUS="failed"
+              echo "Pod $FAILED_POD failed: $ERROR_REASON"
+              break
+            fi
+            
+            echo "Ready pods: $READY_PODS / $TOTAL_PODS"
+            
+            # Если хотя бы один под Ready - успех
+            if [ "$READY_PODS" -gt 0 ]; then
+              FINAL_STATUS="success"
+              echo "At least one pod is ready!"
+              break
+            fi
+            
+            echo "Waiting 10 seconds..."
+            sleep 10
+          done
+          
+          # Формируем обновлённое сообщение
+          if [ "$FINAL_STATUS" = "success" ]; then
+            STATUS_TEXT="✅ *Container Status:* Running successfully!"
+          elif [ "$FINAL_STATUS" = "failed" ]; then
+            STATUS_TEXT="❌ *Container Status:* Failed to start!
+          
+          $ERROR_MESSAGE"
+          else
+            STATUS_TEXT="⚠️ *Container Status:* Unknown (timeout waiting for pods)"
+          fi
+          
+          UPDATED_MESSAGE="*${{ github.actor }}* deployed some fresh code!🚀
+
+          *Repository:* \`${{ github.repository }}\`
+          *Commit Message:* 🔗[${{ github.event.head_commit.message }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+
+          ⏱️ *Timing:*
+          • Build Docker: \`${{ needs.build-docker.outputs.duration }}\`
+          • Prepare K8s: \`${{ needs.prepare-k8s.outputs.duration }}\`
+          • Deploy: \`${{ needs.deploy.outputs.duration }}\`
+
+          $STATUS_TEXT
+
+          🔗 [Action Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          
+          # Обновляем сообщение в Telegram
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/editMessageText" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d message_id="$MESSAGE_ID" \
+            -d parse_mode="markdown" \
+            -d text="$UPDATED_MESSAGE"
+          
+          echo "Message updated with final status: $FINAL_STATUS"
+          
+          # Если контейнер не стартанул - выходим с ошибкой для видимости в Actions
+          if [ "$FINAL_STATUS" = "failed" ]; then
+            echo "::warning::Container failed to start!"
+          fi
