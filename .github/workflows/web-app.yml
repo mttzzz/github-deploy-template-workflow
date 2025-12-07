@@ -106,7 +106,12 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       docker_tag: ${{ steps.export_tag.outputs.tag }}
+      duration: ${{ steps.duration.outputs.time }}
     steps:
+      - name: Start timer
+        id: start
+        run: echo "time=$(date +%s)" >> $GITHUB_OUTPUT
+
       - name: Checkout deploying repository
         uses: actions/checkout@v4
         with:
@@ -150,10 +155,25 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=${{ inputs.cache_mode }}
 
-  deploy:
-    needs: [build-docker]
+      - name: Calculate duration
+        id: duration
+        run: |
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - ${{ steps.start.outputs.time }}))
+          echo "time=${DURATION}s" >> $GITHUB_OUTPUT
+
+  # Подготовка Kubernetes/Helm выполняется ПАРАЛЛЕЛЬНО со сборкой Docker образа
+  prepare-k8s:
+    needs: validate
     runs-on: ubuntu-latest
+    outputs:
+      helm_params: ${{ steps.prepare_params.outputs.helm_params }}
+      duration: ${{ steps.duration.outputs.time }}
     steps:
+      - name: Start timer
+        id: start
+        run: echo "time=$(date +%s)" >> $GITHUB_OUTPUT
+
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
         with:
@@ -173,49 +193,103 @@ jobs:
     
       - name: Update Helm Repository 
         run: helm repo update helm_repo
-        
+
+      - name: Prepare Helm parameters
+        id: prepare_params
+        run: |
+          # Decode input parameters
+          PARAMS_STR="${{ inputs.params }}"
+          echo "Decoding input params: $PARAMS_STR"
+          INPUT_PARAMS=$(echo "$PARAMS_STR" | grep -v '^\s*$' | awk '{print "--set", $0}' ORS=' ')
+          
+          # Decode secret parameters
+          SECRET_PARAMS_STR="${{secrets.PARAMS}}"
+          echo "Decoding secrets params: $SECRET_PARAMS_STR"
+          SECRET_PARAMS=$(echo "$SECRET_PARAMS_STR" | grep -v '^\s*$' | awk '{print "--set", $0}' ORS=' ')
+          
+          # Combine parameters (without image, will be added in deploy)
+          BASE_PARAMS="$INPUT_PARAMS $SECRET_PARAMS --set app.name=${{ inputs.app_name }}"
+          
+          echo "helm_params<<EOF" >> $GITHUB_OUTPUT
+          echo "$BASE_PARAMS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Calculate duration
+        id: duration
+        run: |
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - ${{ steps.start.outputs.time }}))
+          echo "time=${DURATION}s" >> $GITHUB_OUTPUT
+
+  # Deploy теперь только применяет Helm chart - очень быстро!
+  deploy:
+    needs: [build-docker, prepare-k8s]
+    runs-on: ubuntu-latest
+    outputs:
+      duration: ${{ steps.duration.outputs.time }}
+    steps:
+      - name: Start timer
+        id: start
+        run: echo "time=$(date +%s)" >> $GITHUB_OUTPUT
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          version: '1.142.0'
+          token: ${{ secrets.DO_TOKEN }}
+          
+      - name: Save the Kubernetes configuration
+        run: |
+          mkdir -p $HOME/.kube
+          doctl kubernetes cluster kubeconfig save main
+
+      - name: Install Helm
+        uses: Azure/setup-helm@v4.0.0
+
+      - name: Login to Helm Repository 
+        run: helm repo add --username ${{ secrets.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_PASSWORD }} helm_repo ${{secrets.HELM_REPO}}/
+
       - name: Deploy to Kubernetes with Helm
         run: |
-              # Decode input parameters
-              PARAMS_STR="${{ inputs.params }}"
-              echo "Decoding input params: $PARAMS_STR"
-              INPUT_PARAMS=$(echo "$PARAMS_STR" | grep -v '^\s*$' | awk '{print "--set", $0}' ORS=' ')
-              
-              # Decode secret parameters
-              SECRET_PARAMS_STR="${{secrets.PARAMS}}"
-              echo "Decoding secrets params: $SECRET_PARAMS_STR"
-              SECRET_PARAMS=$(echo "$SECRET_PARAMS_STR" | grep -v '^\s*$' | awk '{print "--set", $0}' ORS=' ')
-              
-              # Combine input and secret parameters
-              FULL_PARAMS="$INPUT_PARAMS $SECRET_PARAMS --set app.name=${{ inputs.app_name }} --set app.image=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:${{ needs.build-docker.outputs.docker_tag }}"
-              
-              echo "Full Params for Helm: $FULL_PARAMS"
-              
-              # Deploy using Helm
-              helm upgrade ${{ inputs.app_name }} helm_repo/${{ inputs.helm_chart }} -i $FULL_PARAMS
-              
-              # Restart the deployment to ensure pods are updated
-              kubectl rollout restart deployment ${{ inputs.app_name }}
+          FULL_PARAMS="${{ needs.prepare-k8s.outputs.helm_params }} --set app.image=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:${{ needs.build-docker.outputs.docker_tag }}"
+          
+          echo "Full Params for Helm: $FULL_PARAMS"
+          
+          # Deploy using Helm
+          helm upgrade ${{ inputs.app_name }} helm_repo/${{ inputs.helm_chart }} -i $FULL_PARAMS
+          
+          # Restart the deployment to ensure pods are updated
+          kubectl rollout restart deployment ${{ inputs.app_name }}
+
+      - name: Calculate duration
+        id: duration
+        run: |
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - ${{ steps.start.outputs.time }}))
+          echo "time=${DURATION}s" >> $GITHUB_OUTPUT
 
   notify:
-    needs: [build-docker, deploy]
+    needs: [build-docker, prepare-k8s, deploy]
     if: ${{ always() && needs.build-docker.result != 'cancelled' }}
     runs-on: ubuntu-latest
     steps:
       - name: Determine failed step
         id: failed_step
-        if: ${{ needs.build-docker.result == 'failure' || needs.deploy.result == 'failure' }}
+        if: ${{ needs.build-docker.result == 'failure' || needs.prepare-k8s.result == 'failure' || needs.deploy.result == 'failure' }}
         run: |
           if [[ "${{ needs.build-docker.result }}" == "failure" ]]; then
             echo "step=🐳 Build Docker" >> $GITHUB_OUTPUT
             echo "job=build-docker" >> $GITHUB_OUTPUT
+          elif [[ "${{ needs.prepare-k8s.result }}" == "failure" ]]; then
+            echo "step=⚙️ Prepare Kubernetes" >> $GITHUB_OUTPUT
+            echo "job=prepare-k8s" >> $GITHUB_OUTPUT
           elif [[ "${{ needs.deploy.result }}" == "failure" ]]; then
             echo "step=🚀 Deploy to Kubernetes" >> $GITHUB_OUTPUT
             echo "job=deploy" >> $GITHUB_OUTPUT
           fi
 
       - name: Send Failure Telegram Message
-        if: ${{ needs.build-docker.result == 'failure' || needs.deploy.result == 'failure' }}
+        if: ${{ needs.build-docker.result == 'failure' || needs.prepare-k8s.result == 'failure' || needs.deploy.result == 'failure' }}
         uses: appleboy/telegram-action@master
         with:
               token: ${{ secrets.TELEGRAM_TOKEN }}
@@ -245,4 +319,10 @@ jobs:
   
                 *Repository:* `${{ github.repository }}`   
                 *Commit Message:* 🔗[${{ github.event.head_commit.message }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
-                *Check the logs for details:* 🔗[Action Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+                
+                ⏱️ *Timing:*
+                • Build Docker: `${{ needs.build-docker.outputs.duration }}`
+                • Prepare K8s: `${{ needs.prepare-k8s.outputs.duration }}`
+                • Deploy: `${{ needs.deploy.outputs.duration }}`
+                
+                🔗 [Action Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
