@@ -298,16 +298,24 @@ jobs:
       - name: Send Failure Telegram Message
         if: ${{ needs.build-docker.outputs.validation_error == '' && (needs.build-docker.result == 'failure' || needs.prepare-k8s.result == 'failure' || needs.deploy.result == 'failure') }}
         run: |
-          MESSAGE="🚨 *Deployment Failed* 🚨
+          MESSAGE="━━━━━━━━━━━━━━━━━━━━━━
+          🔴 *DEPLOYMENT FAILED*
+          ━━━━━━━━━━━━━━━━━━━━━━
 
-          *Failed Step:* ${{ steps.failed_step.outputs.step }}
+          👤 *Author:* \`${{ github.actor }}\`
+          📦 *Repo:* \`${{ github.repository }}\`
+          🌿 *Branch:* \`${{ github.ref_name }}\`
 
-          *${{ github.actor }}* encountered an error. Please check the GitHub Actions logs for more details.⚠️
+          ─────────────────────
+          💬 *Commit:*
+          [${{ github.event.head_commit.message }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
 
-          *Repository:* \`${{ github.repository }}\`
-          *Branch:* \`${{ github.ref_name }}\`
-          *Commit Message:* 🔗[${{ github.event.head_commit.message }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
-          *Check the logs for details:* 🔗[Action Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          ─────────────────────
+          ❌ *Failed Step:*
+          \`${{ steps.failed_step.outputs.step }}\`
+
+          ─────────────────────
+          🔗 [View Logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
             -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
@@ -318,19 +326,27 @@ jobs:
         if: ${{ needs.deploy.result == 'success' }}
         id: send_success
         run: |
-          MESSAGE="*${{ github.actor }}* deployed some fresh code!🚀
+          MESSAGE="━━━━━━━━━━━━━━━━━━━━━━
+          🚀 *DEPLOYING...*
+          ━━━━━━━━━━━━━━━━━━━━━━
 
-          *Repository:* \`${{ github.repository }}\`
-          *Commit Message:* 🔗[${{ github.event.head_commit.message }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+          👤 *Author:* \`${{ github.actor }}\`
+          📦 *Repo:* \`${{ github.repository }}\`
 
-          ⏱️ *Timing:*
-          • Build Docker: \`${{ needs.build-docker.outputs.duration }}\`
-          • Prepare K8s: \`${{ needs.prepare-k8s.outputs.duration }}\`
-          • Deploy: \`${{ needs.deploy.outputs.duration }}\`
+          ─────────────────────
+          💬 *Commit:*
+          [${{ github.event.head_commit.message }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
 
-          ⏳ *Container Status:* Starting...
+          ─────────────────────
+          ⏱️ *Performance:*
+          ├ 🐳 Build: \`${{ needs.build-docker.outputs.duration }}\`
+          ├ ☸️ Prepare: \`${{ needs.prepare-k8s.outputs.duration }}\`
+          └ 📤 Deploy: \`${{ needs.deploy.outputs.duration }}\`
 
-          🔗 [Action Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          ─────────────────────
+          ⏳ *Status:* Waiting for pod...
+
+          🔗 [View Pipeline](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           
           # Отправляем сообщение и сохраняем message_id для последующего редактирования
           RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
@@ -403,16 +419,16 @@ jobs:
               # Получаем логи если контейнер падает
               if [ "$ERROR_REASON" = "CrashLoopBackOff" ] || [ "$ERROR_REASON" = "Error" ]; then
                 POD_LOGS=$(kubectl logs $FAILED_POD --tail=10 2>/dev/null | tail -5 || echo "Unable to get logs")
-                ERROR_MESSAGE="Reason: $ERROR_REASON
-          Message: $ERROR_MSG
-          
-          Last logs:
+                ERROR_MESSAGE="🏷️ \`$ERROR_REASON\`
+          📝 $ERROR_MSG
+
+          📋 *Last Logs:*
           \`\`\`
           $POD_LOGS
           \`\`\`"
               else
-                ERROR_MESSAGE="Reason: $ERROR_REASON
-          Message: $ERROR_MSG"
+                ERROR_MESSAGE="🏷️ \`$ERROR_REASON\`
+          📝 $ERROR_MSG"
               fi
               
               FINAL_STATUS="failed"
@@ -435,28 +451,45 @@ jobs:
           
           # Формируем обновлённое сообщение
           if [ "$FINAL_STATUS" = "success" ]; then
-            STATUS_TEXT="✅ *Container Status:* Running successfully!"
+            HEADER="━━━━━━━━━━━━━━━━━━━━━━
+          🟢 *DEPLOY SUCCESSFUL*
+          ━━━━━━━━━━━━━━━━━━━━━━"
+            STATUS_TEXT="✅ *Status:* Running"
           elif [ "$FINAL_STATUS" = "failed" ]; then
-            STATUS_TEXT="❌ *Container Status:* Failed to start!
-          
+            HEADER="━━━━━━━━━━━━━━━━━━━━━━
+          🔴 *DEPLOY FAILED*
+          ━━━━━━━━━━━━━━━━━━━━━━"
+            STATUS_TEXT="❌ *Status:* Failed
+
+          ⚠️ *Error Details:*
           $ERROR_MESSAGE"
           else
-            STATUS_TEXT="⚠️ *Container Status:* Unknown (timeout waiting for pods)"
+            HEADER="━━━━━━━━━━━━━━━━━━━━━━
+          🟡 *DEPLOY TIMEOUT*
+          ━━━━━━━━━━━━━━━━━━━━━━"
+            STATUS_TEXT="⏳ *Status:* Unknown
+          Pod didn't become ready in 60s"
           fi
           
-          UPDATED_MESSAGE="*${{ github.actor }}* deployed some fresh code!🚀
+          UPDATED_MESSAGE="$HEADER
 
-          *Repository:* \`${{ github.repository }}\`
-          *Commit Message:* 🔗[${{ github.event.head_commit.message }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+          👤 *Author:* \`${{ github.actor }}\`
+          📦 *Repo:* \`${{ github.repository }}\`
 
-          ⏱️ *Timing:*
-          • Build Docker: \`${{ needs.build-docker.outputs.duration }}\`
-          • Prepare K8s: \`${{ needs.prepare-k8s.outputs.duration }}\`
-          • Deploy: \`${{ needs.deploy.outputs.duration }}\`
+          ─────────────────────
+          💬 *Commit:*
+          [${{ github.event.head_commit.message }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
 
+          ─────────────────────
+          ⏱️ *Performance:*
+          ├ 🐳 Build: \`${{ needs.build-docker.outputs.duration }}\`
+          ├ ☸️ Prepare: \`${{ needs.prepare-k8s.outputs.duration }}\`
+          └ 📤 Deploy: \`${{ needs.deploy.outputs.duration }}\`
+
+          ─────────────────────
           $STATUS_TEXT
 
-          🔗 [Action Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          🔗 [View Pipeline](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           
           # Обновляем сообщение в Telegram
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/editMessageText" \
