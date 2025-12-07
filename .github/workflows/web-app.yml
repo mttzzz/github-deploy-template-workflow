@@ -376,7 +376,7 @@ jobs:
         run: |
           APP_NAME="${{ inputs.app_name }}"
           MESSAGE_ID="${{ steps.send_success.outputs.message_id }}"
-          MAX_ATTEMPTS=12  # 12 attempts * 5 seconds = 60 seconds
+          MAX_ATTEMPTS=24  # 24 attempts * 5 seconds = 120 seconds
           ATTEMPT=0
           FINAL_STATUS="unknown"
           ERROR_MESSAGE=""
