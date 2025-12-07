@@ -376,7 +376,7 @@ jobs:
         run: |
           APP_NAME="${{ inputs.app_name }}"
           MESSAGE_ID="${{ steps.send_success.outputs.message_id }}"
-          MAX_ATTEMPTS=6  # 6 attempts * 10 seconds = 60 seconds
+          MAX_ATTEMPTS=12  # 12 attempts * 5 seconds = 60 seconds
           ATTEMPT=0
           FINAL_STATUS="unknown"
           ERROR_MESSAGE=""
@@ -384,18 +384,32 @@ jobs:
           echo "Starting pod monitoring for deployment: $APP_NAME"
           
           # Ждём немного чтобы новые поды начали создаваться
-          sleep 5
+          sleep 3
           
           while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
             ATTEMPT=$((ATTEMPT + 1))
             echo "=== Attempt $ATTEMPT/$MAX_ATTEMPTS ==="
             
-            # Получаем статус подов
-            PODS_JSON=$(kubectl get pods -l app.kubernetes.io/name=$APP_NAME -o json 2>/dev/null || kubectl get pods -l app=$APP_NAME -o json 2>/dev/null || echo '{"items":[]}')
+            # Пробуем разные label selectors (Helm charts используют разные схемы)
+            # 1. app=NAME (простой вариант)
+            # 2. app.kubernetes.io/name=NAME (стандарт Kubernetes)
+            # 3. app.kubernetes.io/instance=NAME (Helm release name)
+            
+            PODS_JSON='{"items":[]}'
+            for SELECTOR in "app=$APP_NAME" "app.kubernetes.io/name=$APP_NAME" "app.kubernetes.io/instance=$APP_NAME"; do
+              echo "Trying selector: $SELECTOR"
+              RESULT=$(kubectl get pods -l "$SELECTOR" -o json 2>/dev/null || echo '{"items":[]}')
+              COUNT=$(echo "$RESULT" | jq '.items | length')
+              if [ "$COUNT" -gt 0 ]; then
+                echo "Found $COUNT pods with selector: $SELECTOR"
+                PODS_JSON="$RESULT"
+                break
+              fi
+            done
             
             # Проверяем количество подов
             POD_COUNT=$(echo "$PODS_JSON" | jq '.items | length')
-            echo "Found $POD_COUNT pods"
+            echo "Total pods found: $POD_COUNT"
             
             if [ "$POD_COUNT" -eq 0 ]; then
               echo "No pods found yet, waiting..."
