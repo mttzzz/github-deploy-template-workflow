@@ -265,24 +265,11 @@ jobs:
 
       - name: Restore k8s config
         run: |
-          # Восстанавливаем kubeconfig (уже содержит токен, doctl не нужен!)
           cp -r /tmp/k8s-bundle/kube $HOME/.kube
           chmod 600 $HOME/.kube/config
-          # Восстанавливаем helm config
           mkdir -p $HOME/.config $HOME/.cache
           cp -r /tmp/k8s-bundle/config-helm $HOME/.config/helm 2>/dev/null || true
           cp -r /tmp/k8s-bundle/cache-helm $HOME/.cache/helm 2>/dev/null || true
-          echo "Config restored. Testing connection:"
-          kubectl cluster-info
-
-      - name: Install Helm (fast, no setup)
-        run: |
-          # Helm уже может быть установлен на ubuntu runner
-          if command -v helm &> /dev/null; then
-            echo "Helm already installed: $(helm version --short)"
-          else
-            curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-          fi
 
       - name: Deploy to Kubernetes with Helm
         run: |
