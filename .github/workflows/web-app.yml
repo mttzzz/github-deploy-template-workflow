@@ -174,16 +174,24 @@ jobs:
         id: start
         run: echo "time=$(date +%s)" >> $GITHUB_OUTPUT
 
-      - name: Install doctl
-        uses: digitalocean/action-doctl@v2
-        with:
-          version: '1.142.0'
-          token: ${{ secrets.DO_TOKEN }}
-          
-      - name: Save the Kubernetes configuration
+      - name: Get kubeconfig via API (no doctl needed)
         run: |
           mkdir -p $HOME/.kube
-          doctl kubernetes cluster kubeconfig save main
+          
+          # Получаем cluster ID
+          CLUSTER_ID=$(curl -s -X GET "https://api.digitalocean.com/v2/kubernetes/clusters" \
+            -H "Authorization: Bearer ${{ secrets.DO_TOKEN }}" \
+            -H "Content-Type: application/json" | jq -r '.kubernetes_clusters[] | select(.name=="main") | .id')
+          
+          echo "Cluster ID: $CLUSTER_ID"
+          
+          # Получаем kubeconfig с токеном (expiry 1 час = 3600 сек)
+          curl -s -X GET "https://api.digitalocean.com/v2/kubernetes/clusters/${CLUSTER_ID}/kubeconfig?expiry_seconds=3600" \
+            -H "Authorization: Bearer ${{ secrets.DO_TOKEN }}" \
+            > $HOME/.kube/config
+          
+          chmod 600 $HOME/.kube/config
+          echo "Kubeconfig downloaded successfully"
           kubectl cluster-info
 
       - name: Install Helm
@@ -217,17 +225,12 @@ jobs:
 
       - name: Package k8s config for deploy
         run: |
-          mkdir -p /tmp/k8s-bundle/bin
+          mkdir -p /tmp/k8s-bundle
           cp -r $HOME/.kube /tmp/k8s-bundle/kube
           cp -r $HOME/.config/helm /tmp/k8s-bundle/config-helm 2>/dev/null || true
           cp -r $HOME/.cache/helm /tmp/k8s-bundle/cache-helm 2>/dev/null || true
-          # Копируем doctl бинарник
-          cp $(which doctl) /tmp/k8s-bundle/bin/
-          # Копируем doctl конфиг с токеном
-          cp -r $HOME/.config/doctl /tmp/k8s-bundle/doctl-config 2>/dev/null || true
           echo "Bundle contents:"
           ls -la /tmp/k8s-bundle/
-          ls -la /tmp/k8s-bundle/bin/
           
       - name: Upload k8s bundle
         uses: actions/upload-artifact@v4
@@ -262,17 +265,11 @@ jobs:
 
       - name: Restore k8s config
         run: |
-          ls -la /tmp/k8s-bundle/
-          # Восстанавливаем doctl
-          sudo cp /tmp/k8s-bundle/bin/doctl /usr/local/bin/
-          sudo chmod +x /usr/local/bin/doctl
-          mkdir -p $HOME/.config
-          cp -r /tmp/k8s-bundle/doctl-config $HOME/.config/doctl 2>/dev/null || true
-          # Восстанавливаем kubeconfig
+          # Восстанавливаем kubeconfig (уже содержит токен, doctl не нужен!)
           cp -r /tmp/k8s-bundle/kube $HOME/.kube
           chmod 600 $HOME/.kube/config
           # Восстанавливаем helm config
-          mkdir -p $HOME/.cache
+          mkdir -p $HOME/.config $HOME/.cache
           cp -r /tmp/k8s-bundle/config-helm $HOME/.config/helm 2>/dev/null || true
           cp -r /tmp/k8s-bundle/cache-helm $HOME/.cache/helm 2>/dev/null || true
           echo "Config restored. Testing connection:"
@@ -280,7 +277,12 @@ jobs:
 
       - name: Install Helm (fast, no setup)
         run: |
-          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          # Helm уже может быть установлен на ubuntu runner
+          if command -v helm &> /dev/null; then
+            echo "Helm already installed: $(helm version --short)"
+          else
+            curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          fi
 
       - name: Deploy to Kubernetes with Helm
         run: |
