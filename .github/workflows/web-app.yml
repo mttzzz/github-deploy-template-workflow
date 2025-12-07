@@ -265,6 +265,12 @@ jobs:
           echo "Kubeconfig restored:"
           ls -la $HOME/.kube/
 
+      - name: Install doctl (fast binary)
+        run: |
+          curl -sL https://github.com/digitalocean/doctl/releases/download/v1.104.0/doctl-1.104.0-linux-amd64.tar.gz | tar -xzv
+          sudo mv doctl /usr/local/bin/
+          doctl auth init -t ${{ secrets.DO_TOKEN }}
+
       - name: Install Helm (fast, no setup)
         run: |
           curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
