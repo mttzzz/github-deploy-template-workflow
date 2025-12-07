@@ -305,39 +305,39 @@ jobs:
 
       - name: Send Failure Telegram Message
         if: ${{ needs.build-docker.result == 'failure' || needs.prepare-k8s.result == 'failure' || needs.deploy.result == 'failure' }}
-        uses: appleboy/telegram-action@master
-        with:
-              token: ${{ secrets.TELEGRAM_TOKEN }}
-              to: ${{ secrets.TELEGRAM_CHAT_ID }}
-              format: markdown
-              message: |
-                🚨 *Deployment Failed* 🚨
-                
-                *Failed Step:* ${{ steps.failed_step.outputs.step }}
-    
-                *${{ github.actor }}* encountered an error. Please check the GitHub Actions logs for more details.⚠️
-    
-                *Repository:* `${{ github.repository }}`
-                *Branch:* `${{ github.ref_name }}`
-                *Commit Message:* 🔗[${{ github.event.head_commit.message }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
-                *Check the logs for details:* 🔗[Action Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+        run: |
+          MESSAGE="🚨 *Deployment Failed* 🚨
+
+          *Failed Step:* ${{ steps.failed_step.outputs.step }}
+
+          *${{ github.actor }}* encountered an error. Please check the GitHub Actions logs for more details.⚠️
+
+          *Repository:* \`${{ github.repository }}\`
+          *Branch:* \`${{ github.ref_name }}\`
+          *Commit Message:* 🔗[${{ github.event.head_commit.message }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+          *Check the logs for details:* 🔗[Action Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d parse_mode="markdown" \
+            -d text="$MESSAGE"
   
       - name: Send Success Telegram Message
         if: ${{ needs.deploy.result == 'success' }}
-        uses: appleboy/telegram-action@master
-        with:
-              token: ${{ secrets.TELEGRAM_TOKEN }}
-              to: ${{ secrets.TELEGRAM_CHAT_ID }}
-              format: markdown 
-              message: |
-                *${{ github.actor }}* deployed some fresh code!🚀
-  
-                *Repository:* `${{ github.repository }}`   
-                *Commit Message:* 🔗[${{ github.event.head_commit.message }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
-                
-                ⏱️ *Timing:*
-                • Build Docker: `${{ needs.build-docker.outputs.duration }}`
-                • Prepare K8s: `${{ needs.prepare-k8s.outputs.duration }}`
-                • Deploy: `${{ needs.deploy.outputs.duration }}`
-                
-                🔗 [Action Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+        run: |
+          MESSAGE="*${{ github.actor }}* deployed some fresh code!🚀
+
+          *Repository:* \`${{ github.repository }}\`
+          *Commit Message:* 🔗[${{ github.event.head_commit.message }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+
+          ⏱️ *Timing:*
+          • Build Docker: \`${{ needs.build-docker.outputs.duration }}\`
+          • Prepare K8s: \`${{ needs.prepare-k8s.outputs.duration }}\`
+          • Deploy: \`${{ needs.deploy.outputs.duration }}\`
+
+          🔗 [Action Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d parse_mode="markdown" \
+            -d text="$MESSAGE"
