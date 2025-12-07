@@ -297,9 +297,9 @@ jobs:
       - name: Send Failure Telegram Message
         if: ${{ needs.build-docker.outputs.validation_error == '' && (needs.build-docker.result == 'failure' || needs.prepare-k8s.result == 'failure' || needs.deploy.result == 'failure') }}
         run: |
-          MESSAGE="━━━━━━━━━━━━━━━━━━━━━━
+          MESSAGE="━━━━━━━━━━━━━━
           🔴 *DEPLOYMENT FAILED*
-          ━━━━━━━━━━━━━━━━━━━━━━
+          ━━━━━━━━━━━━━━
 
           👤 *Author:* \`${{ github.actor }}\`
           📦 *Repo:* \`${{ github.repository }}\`
@@ -324,9 +324,9 @@ jobs:
         if: ${{ needs.deploy.result == 'success' }}
         id: send_success
         run: |
-          MESSAGE="━━━━━━━━━━━━━━━━━━━━━━
+          MESSAGE="━━━━━━━━━━━━━━
           🚀 *DEPLOYING...*
-          ━━━━━━━━━━━━━━━━━━━━━━
+          ━━━━━━━━━━━━━━
 
           👤 *Author:* \`${{ github.actor }}\`
           📦 *Repo:* \`${{ github.repository }}\`
@@ -468,22 +468,22 @@ jobs:
           
           # Формируем обновлённое сообщение
           if [ "$FINAL_STATUS" = "success" ]; then
-            HEADER="━━━━━━━━━━━━━━━━━━━━━━
+            HEADER="━━━━━━━━━━━━━━
           🟢 *DEPLOY SUCCESSFUL*
-          ━━━━━━━━━━━━━━━━━━━━━━"
+          ━━━━━━━━━━━━━━"
             STATUS_TEXT="✅ *Status:* Running"
           elif [ "$FINAL_STATUS" = "failed" ]; then
-            HEADER="━━━━━━━━━━━━━━━━━━━━━━
+            HEADER="━━━━━━━━━━━━━━
           🔴 *DEPLOY FAILED*
-          ━━━━━━━━━━━━━━━━━━━━━━"
+          ━━━━━━━━━━━━━━"
             STATUS_TEXT="❌ *Status:* Failed
 
           ⚠️ *Error Details:*
           $ERROR_MESSAGE"
           else
-            HEADER="━━━━━━━━━━━━━━━━━━━━━━
+            HEADER="━━━━━━━━━━━━━━
           🟡 *DEPLOY TIMEOUT*
-          ━━━━━━━━━━━━━━━━━━━━━━"
+          ━━━━━━━━━━━━━━"
             STATUS_TEXT="⏳ *Status:* Unknown
           Pod didn't become ready in 60s"
           fi
