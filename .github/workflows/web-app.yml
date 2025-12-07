@@ -298,7 +298,6 @@ jobs:
         if: ${{ needs.build-docker.outputs.validation_error == '' && (needs.build-docker.result == 'failure' || needs.prepare-k8s.result == 'failure' || needs.deploy.result == 'failure') }}
         run: |
           MESSAGE="🔴 <b>DEPLOYMENT FAILED</b>
-          ━━━━━━━━━━━━━━━━━━━━
 
           👤 <b>Author:</b> <code>${{ github.actor }}</code>
           📦 <b>Repo:</b> <code>${{ github.repository }}</code>
@@ -324,7 +323,6 @@ jobs:
         id: send_success
         run: |
           MESSAGE="🚀 <b>DEPLOYING...</b>
-          ━━━━━━━━━━━━━━━━━━━━
 
           👤 <b>Author:</b> <code>${{ github.actor }}</code>
           📦 <b>Repo:</b> <code>${{ github.repository }}</code>
@@ -452,19 +450,16 @@ jobs:
           
           # Формируем обновлённое сообщение
           if [ "$FINAL_STATUS" = "success" ]; then
-            HEADER="🟢 <b>DEPLOY SUCCESSFUL</b>
-          ━━━━━━━━━━━━━━━━━━━━"
+            HEADER="🟢 <b>DEPLOY SUCCESSFUL</b>"
             STATUS_TEXT="✅ <b>Status:</b> Running"
           elif [ "$FINAL_STATUS" = "failed" ]; then
-            HEADER="🔴 <b>DEPLOY FAILED</b>
-          ━━━━━━━━━━━━━━━━━━━━"
+            HEADER="🔴 <b>DEPLOY FAILED</b>"
             STATUS_TEXT="❌ <b>Status:</b> Failed
 
           ⚠️ <b>Error Details:</b>
           $ERROR_MESSAGE"
           else
-            HEADER="🟡 <b>DEPLOY TIMEOUT</b>
-          ━━━━━━━━━━━━━━━━━━━━"
+            HEADER="🟡 <b>DEPLOY TIMEOUT</b>"
             STATUS_TEXT="⏳ <b>Status:</b> Unknown
           Pod didn't become ready in 120s"
           fi
