@@ -452,11 +452,17 @@ jobs:
             
             echo "Ready pods: $READY_PODS / $TOTAL_PODS"
             
-            # Если хотя бы один под Ready - успех
-            if [ "$READY_PODS" -gt 0 ]; then
+            # Успех когда остался только 1 под и он Ready
+            # (после rollout restart старый под удаляется, новый становится Ready)
+            if [ "$TOTAL_PODS" -eq 1 ] && [ "$READY_PODS" -eq 1 ]; then
               FINAL_STATUS="success"
-              echo "At least one pod is ready!"
+              echo "Single pod is ready - rollout complete!"
               break
+            fi
+            
+            # Если 2 пода и оба Ready - значит ещё идёт rolling update
+            if [ "$TOTAL_PODS" -gt 1 ] && [ "$READY_PODS" -gt 0 ]; then
+              echo "Rolling update in progress ($READY_PODS ready, waiting for old pods to terminate)..."
             fi
             
             echo "Waiting 5 seconds..."
