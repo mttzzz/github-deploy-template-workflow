@@ -54,21 +54,20 @@ on:
           required: false
 
 jobs:
-  validate:
+  build-docker:
     runs-on: ubuntu-latest
     outputs:
-      validation_error: ${{ steps.check.outputs.error }}
+      docker_tag: ${{ steps.export_tag.outputs.tag }}
+      duration: ${{ steps.duration.outputs.time }}
+      validation_error: ${{ steps.validate.outputs.error }}
     steps:
       - name: Validate required parameters
-        id: check
+        id: validate
         run: |
           ERRORS=""
-          
-          # Check: if with_submodules is enabled, GIT_TOKEN should be provided
           if [[ "${{ inputs.with_submodules }}" == "true" && -z "${{ secrets.GIT_TOKEN }}" ]]; then
             ERRORS="${ERRORS}❌ with_submodules=true, но GIT_TOKEN не передан\n"
           fi
-          
           if [[ -n "$ERRORS" ]]; then
             echo "error<<EOF" >> $GITHUB_OUTPUT
             echo -e "$ERRORS" >> $GITHUB_OUTPUT
@@ -76,38 +75,7 @@ jobs:
             echo "::error::Validation failed"
             exit 1
           fi
-          
-          echo "✅ All parameters validated successfully"
 
-  notify-validation-failed:
-    needs: validate
-    if: ${{ failure() }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Send Validation Error to Telegram
-        uses: appleboy/telegram-action@master
-        with:
-          token: ${{ secrets.TELEGRAM_TOKEN }}
-          to: ${{ secrets.TELEGRAM_CHAT_ID }}
-          format: markdown
-          message: |
-            ⚠️ *Validation Failed* ⚠️
-            
-            *Repository:* `${{ github.repository }}`
-            *Branch:* `${{ github.ref_name }}`
-            
-            *Ошибки конфигурации:*
-            ${{ needs.validate.outputs.validation_error }}
-            
-            *Деплой не запущен. Исправьте конфигурацию и запустите заново.*
-
-  build-docker:
-    needs: validate
-    runs-on: ubuntu-latest
-    outputs:
-      docker_tag: ${{ steps.export_tag.outputs.tag }}
-      duration: ${{ steps.duration.outputs.time }}
-    steps:
       - name: Start timer
         id: start
         run: echo "time=$(date +%s)" >> $GITHUB_OUTPUT
@@ -164,7 +132,6 @@ jobs:
 
   # Подготовка Kubernetes/Helm выполняется ПАРАЛЛЕЛЬНО со сборкой Docker образа
   prepare-k8s:
-    needs: validate
     runs-on: ubuntu-latest
     outputs:
       helm_params: ${{ steps.prepare_params.outputs.helm_params }}
@@ -292,12 +259,30 @@ jobs:
 
   notify:
     needs: [build-docker, prepare-k8s, deploy]
-    if: ${{ always() && needs.build-docker.result != 'cancelled' }}
+    if: ${{ always() && (needs.build-docker.result != 'cancelled' || needs.prepare-k8s.result != 'cancelled') }}
     runs-on: ubuntu-latest
     steps:
+      - name: Send Validation Error to Telegram
+        if: ${{ needs.build-docker.outputs.validation_error != '' }}
+        run: |
+          MESSAGE="⚠️ *Validation Failed* ⚠️
+
+          *Repository:* \`${{ github.repository }}\`
+          *Branch:* \`${{ github.ref_name }}\`
+
+          *Ошибки конфигурации:*
+          ${{ needs.build-docker.outputs.validation_error }}
+
+          *Деплой не запущен. Исправьте конфигурацию и запустите заново.*"
+          
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d parse_mode="markdown" \
+            -d text="$MESSAGE"
+
       - name: Determine failed step
         id: failed_step
-        if: ${{ needs.build-docker.result == 'failure' || needs.prepare-k8s.result == 'failure' || needs.deploy.result == 'failure' }}
+        if: ${{ needs.build-docker.outputs.validation_error == '' && (needs.build-docker.result == 'failure' || needs.prepare-k8s.result == 'failure' || needs.deploy.result == 'failure') }}
         run: |
           if [[ "${{ needs.build-docker.result }}" == "failure" ]]; then
             echo "step=🐳 Build Docker" >> $GITHUB_OUTPUT
@@ -311,7 +296,7 @@ jobs:
           fi
 
       - name: Send Failure Telegram Message
-        if: ${{ needs.build-docker.result == 'failure' || needs.prepare-k8s.result == 'failure' || needs.deploy.result == 'failure' }}
+        if: ${{ needs.build-docker.outputs.validation_error == '' && (needs.build-docker.result == 'failure' || needs.prepare-k8s.result == 'failure' || needs.deploy.result == 'failure') }}
         run: |
           MESSAGE="🚨 *Deployment Failed* 🚨
 
