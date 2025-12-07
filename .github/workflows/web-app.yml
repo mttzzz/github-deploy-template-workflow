@@ -265,19 +265,19 @@ jobs:
       - name: Send Validation Error to Telegram
         if: ${{ needs.build-docker.outputs.validation_error != '' }}
         run: |
-          MESSAGE="⚠️ *Validation Failed* ⚠️
+          MESSAGE="⚠️ <b>Validation Failed</b> ⚠️
 
-          *Repository:* \`${{ github.repository }}\`
-          *Branch:* \`${{ github.ref_name }}\`
+          📦 <b>Repo:</b> <code>${{ github.repository }}</code>
+          🌿 <b>Branch:</b> <code>${{ github.ref_name }}</code>
 
-          *Ошибки конфигурации:*
+          <b>Ошибки конфигурации:</b>
           ${{ needs.build-docker.outputs.validation_error }}
 
-          *Деплой не запущен. Исправьте конфигурацию и запустите заново.*"
+          <i>Деплой не запущен. Исправьте конфигурацию и запустите заново.</i>"
           
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --arg chat_id "${{ secrets.TELEGRAM_CHAT_ID }}" --arg text "$MESSAGE" '{chat_id: $chat_id, text: $text, parse_mode: "markdown"}')"
+            -d "$(jq -n --arg chat_id "${{ secrets.TELEGRAM_CHAT_ID }}" --arg text "$MESSAGE" '{chat_id: $chat_id, text: $text, parse_mode: "HTML"}')"
 
       - name: Determine failed step
         id: failed_step
@@ -298,58 +298,58 @@ jobs:
         if: ${{ needs.build-docker.outputs.validation_error == '' && (needs.build-docker.result == 'failure' || needs.prepare-k8s.result == 'failure' || needs.deploy.result == 'failure') }}
         run: |
           MESSAGE="━━━━━━━━━━━━━━
-          🔴 *DEPLOYMENT FAILED*
+          🔴 <b>DEPLOYMENT FAILED</b>
           ━━━━━━━━━━━━━━
 
-          👤 *Author:* \`${{ github.actor }}\`
-          📦 *Repo:* \`${{ github.repository }}\`
-          🌿 *Branch:* \`${{ github.ref_name }}\`
+          👤 <b>Author:</b> <code>${{ github.actor }}</code>
+          📦 <b>Repo:</b> <code>${{ github.repository }}</code>
+          🌿 <b>Branch:</b> <code>${{ github.ref_name }}</code>
 
           ─────────────────────
-          💬 *Commit:*
-          [${{ github.event.head_commit.message }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+          💬 <b>Commit:</b>
+          <a href=\"https://github.com/${{ github.repository }}/commit/${{ github.sha }}\">${{ github.event.head_commit.message }}</a>
 
           ─────────────────────
-          ❌ *Failed Step:*
-          \`${{ steps.failed_step.outputs.step }}\`
+          ❌ <b>Failed Step:</b>
+          <code>${{ steps.failed_step.outputs.step }}</code>
 
           ─────────────────────
-          🔗 [View Logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          🔗 <a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">View Logs</a>"
           
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --arg chat_id "${{ secrets.TELEGRAM_CHAT_ID }}" --arg text "$MESSAGE" '{chat_id: $chat_id, text: $text, parse_mode: "markdown"}')"
+            -d "$(jq -n --arg chat_id "${{ secrets.TELEGRAM_CHAT_ID }}" --arg text "$MESSAGE" '{chat_id: $chat_id, text: $text, parse_mode: "HTML", disable_web_page_preview: true}')"
   
       - name: Send Success Telegram Message
         if: ${{ needs.deploy.result == 'success' }}
         id: send_success
         run: |
           MESSAGE="━━━━━━━━━━━━━━
-          🚀 *DEPLOYING...*
+          🚀 <b>DEPLOYING...</b>
           ━━━━━━━━━━━━━━
 
-          👤 *Author:* \`${{ github.actor }}\`
-          📦 *Repo:* \`${{ github.repository }}\`
+          👤 <b>Author:</b> <code>${{ github.actor }}</code>
+          📦 <b>Repo:</b> <code>${{ github.repository }}</code>
 
           ─────────────────────
-          💬 *Commit:*
-          [${{ github.event.head_commit.message }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+          💬 <b>Commit:</b>
+          <a href=\"https://github.com/${{ github.repository }}/commit/${{ github.sha }}\">${{ github.event.head_commit.message }}</a>
 
           ─────────────────────
-          ⏱️ *Performance:*
-          ├ 🐳 Build: \`${{ needs.build-docker.outputs.duration }}\`
-          ├ ☸️ Prepare: \`${{ needs.prepare-k8s.outputs.duration }}\`
-          └ 📤 Deploy: \`${{ needs.deploy.outputs.duration }}\`
+          ⏱️ <b>Performance:</b>
+          ├ 🐳 Build: <code>${{ needs.build-docker.outputs.duration }}</code>
+          ├ ☸️ Prepare: <code>${{ needs.prepare-k8s.outputs.duration }}</code>
+          └ 📤 Deploy: <code>${{ needs.deploy.outputs.duration }}</code>
 
           ─────────────────────
-          ⏳ *Status:* Waiting for pod...
+          ⏳ <b>Status:</b> Waiting for pod...
 
-          🔗 [View Action Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          🔗 <a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">View Action Run</a>"
           
           # Отправляем сообщение через JSON (автоматическое экранирование)
           RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --arg chat_id "${{ secrets.TELEGRAM_CHAT_ID }}" --arg text "$MESSAGE" '{chat_id: $chat_id, text: $text, parse_mode: "markdown"}')")
+            -d "$(jq -n --arg chat_id "${{ secrets.TELEGRAM_CHAT_ID }}" --arg text "$MESSAGE" '{chat_id: $chat_id, text: $text, parse_mode: "HTML", disable_web_page_preview: true}')")
           
           MESSAGE_ID=$(echo "$RESPONSE" | jq -r '.result.message_id')
           echo "message_id=$MESSAGE_ID" >> $GITHUB_OUTPUT
@@ -388,10 +388,6 @@ jobs:
             echo "=== Attempt $ATTEMPT/$MAX_ATTEMPTS ==="
             
             # Пробуем разные label selectors (Helm charts используют разные схемы)
-            # 1. app=NAME (простой вариант)
-            # 2. app.kubernetes.io/name=NAME (стандарт Kubernetes)
-            # 3. app.kubernetes.io/instance=NAME (Helm release name)
-            
             PODS_JSON='{"items":[]}'
             for SELECTOR in "app=$APP_NAME" "app.kubernetes.io/name=$APP_NAME" "app.kubernetes.io/instance=$APP_NAME"; do
               echo "Trying selector: $SELECTOR"
@@ -404,7 +400,6 @@ jobs:
               fi
             done
             
-            # Проверяем количество подов
             POD_COUNT=$(echo "$PODS_JSON" | jq '.items | length')
             echo "Total pods found: $POD_COUNT"
             
@@ -414,31 +409,25 @@ jobs:
               continue
             fi
             
-            # Проверяем статусы всех контейнеров
-            # Ищем Running поды с Ready контейнерами
             READY_PODS=$(echo "$PODS_JSON" | jq '[.items[] | select(.status.phase == "Running") | select(.status.containerStatuses[]?.ready == true)] | length')
             TOTAL_PODS=$(echo "$PODS_JSON" | jq '.items | length')
             
-            # Ищем поды с ошибками
             FAILED_POD=$(echo "$PODS_JSON" | jq -r '.items[] | select(.status.containerStatuses[]?.state.waiting.reason != null) | select(.status.containerStatuses[]?.state.waiting.reason != "ContainerCreating") | .metadata.name' | head -1)
             
             if [ -n "$FAILED_POD" ] && [ "$FAILED_POD" != "null" ]; then
-              # Получаем причину ошибки
               ERROR_REASON=$(echo "$PODS_JSON" | jq -r ".items[] | select(.metadata.name == \"$FAILED_POD\") | .status.containerStatuses[]?.state.waiting.reason" | head -1)
               ERROR_MSG=$(echo "$PODS_JSON" | jq -r ".items[] | select(.metadata.name == \"$FAILED_POD\") | .status.containerStatuses[]?.state.waiting.message" | head -1)
               
-              # Получаем логи если контейнер падает
               if [ "$ERROR_REASON" = "CrashLoopBackOff" ] || [ "$ERROR_REASON" = "Error" ]; then
                 POD_LOGS=$(kubectl logs $FAILED_POD --tail=10 2>/dev/null | tail -5 || echo "Unable to get logs")
-                ERROR_MESSAGE="🏷️ \`$ERROR_REASON\`
+                POD_LOGS_ESCAPED=$(echo "$POD_LOGS" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
+                ERROR_MESSAGE="🏷️ <code>$ERROR_REASON</code>
           📝 $ERROR_MSG
 
-          📋 *Last Logs:*
-          \`\`\`
-          $POD_LOGS
-          \`\`\`"
+          📋 <b>Last Logs:</b>
+          <pre>$POD_LOGS_ESCAPED</pre>"
               else
-                ERROR_MESSAGE="🏷️ \`$ERROR_REASON\`
+                ERROR_MESSAGE="🏷️ <code>$ERROR_REASON</code>
           📝 $ERROR_MSG"
               fi
               
@@ -449,15 +438,12 @@ jobs:
             
             echo "Ready pods: $READY_PODS / $TOTAL_PODS"
             
-            # Успех когда остался только 1 под и он Ready
-            # (после rollout restart старый под удаляется, новый становится Ready)
             if [ "$TOTAL_PODS" -eq 1 ] && [ "$READY_PODS" -eq 1 ]; then
               FINAL_STATUS="success"
               echo "Single pod is ready - rollout complete!"
               break
             fi
             
-            # Если 2 пода и оба Ready - значит ещё идёт rolling update
             if [ "$TOTAL_PODS" -gt 1 ] && [ "$READY_PODS" -gt 0 ]; then
               echo "Rolling update in progress ($READY_PODS ready, waiting for old pods to terminate)..."
             fi
@@ -469,53 +455,51 @@ jobs:
           # Формируем обновлённое сообщение
           if [ "$FINAL_STATUS" = "success" ]; then
             HEADER="━━━━━━━━━━━━━━
-          🟢 *DEPLOY SUCCESSFUL*
+          🟢 <b>DEPLOY SUCCESSFUL</b>
           ━━━━━━━━━━━━━━"
-            STATUS_TEXT="✅ *Status:* Running"
+            STATUS_TEXT="✅ <b>Status:</b> Running"
           elif [ "$FINAL_STATUS" = "failed" ]; then
             HEADER="━━━━━━━━━━━━━━
-          🔴 *DEPLOY FAILED*
+          🔴 <b>DEPLOY FAILED</b>
           ━━━━━━━━━━━━━━"
-            STATUS_TEXT="❌ *Status:* Failed
+            STATUS_TEXT="❌ <b>Status:</b> Failed
 
-          ⚠️ *Error Details:*
+          ⚠️ <b>Error Details:</b>
           $ERROR_MESSAGE"
           else
             HEADER="━━━━━━━━━━━━━━
-          🟡 *DEPLOY TIMEOUT*
+          🟡 <b>DEPLOY TIMEOUT</b>
           ━━━━━━━━━━━━━━"
-            STATUS_TEXT="⏳ *Status:* Unknown
-          Pod didn't become ready in 60s"
+            STATUS_TEXT="⏳ <b>Status:</b> Unknown
+          Pod didn't become ready in 120s"
           fi
           
           UPDATED_MESSAGE="$HEADER
 
-          👤 *Author:* \`${{ github.actor }}\`
-          📦 *Repo:* \`${{ github.repository }}\`
+          👤 <b>Author:</b> <code>${{ github.actor }}</code>
+          📦 <b>Repo:</b> <code>${{ github.repository }}</code>
 
           ─────────────────────
-          💬 *Commit:*
-          [${{ github.event.head_commit.message }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+          💬 <b>Commit:</b>
+          <a href=\"https://github.com/${{ github.repository }}/commit/${{ github.sha }}\">${{ github.event.head_commit.message }}</a>
 
           ─────────────────────
-          ⏱️ *Performance:*
-          ├ 🐳 Build: \`${{ needs.build-docker.outputs.duration }}\`
-          ├ ☸️ Prepare: \`${{ needs.prepare-k8s.outputs.duration }}\`
-          └ 📤 Deploy: \`${{ needs.deploy.outputs.duration }}\`
+          ⏱️ <b>Performance:</b>
+          ├ 🐳 Build: <code>${{ needs.build-docker.outputs.duration }}</code>
+          ├ ☸️ Prepare: <code>${{ needs.prepare-k8s.outputs.duration }}</code>
+          └ 📤 Deploy: <code>${{ needs.deploy.outputs.duration }}</code>
 
           ─────────────────────
           $STATUS_TEXT
 
-          🔗 [View Action Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          🔗 <a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">View Action Run</a>"
           
-          # Обновляем сообщение в Telegram через JSON (автоматическое экранирование)
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/editMessageText" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --arg chat_id "${{ secrets.TELEGRAM_CHAT_ID }}" --arg message_id "$MESSAGE_ID" --arg text "$UPDATED_MESSAGE" '{chat_id: $chat_id, message_id: ($message_id | tonumber), text: $text, parse_mode: "markdown"}')"
+            -d "$(jq -n --arg chat_id "${{ secrets.TELEGRAM_CHAT_ID }}" --arg message_id "$MESSAGE_ID" --arg text "$UPDATED_MESSAGE" '{chat_id: $chat_id, message_id: ($message_id | tonumber), text: $text, parse_mode: "HTML", disable_web_page_preview: true}')"
           
           echo "Message updated with final status: $FINAL_STATUS"
           
-          # Если контейнер не стартанул - выходим с ошибкой для видимости в Actions
           if [ "$FINAL_STATUS" = "failed" ]; then
             echo "::warning::Container failed to start!"
           fi
