@@ -214,6 +214,20 @@ jobs:
           echo "$BASE_PARAMS" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
+      - name: Package k8s config for deploy
+        run: |
+          mkdir -p /tmp/k8s-bundle
+          cp -r $HOME/.kube /tmp/k8s-bundle/
+          cp -r $HOME/.config/helm /tmp/k8s-bundle/ 2>/dev/null || true
+          cp -r $HOME/.cache/helm /tmp/k8s-bundle/ 2>/dev/null || true
+          
+      - name: Upload k8s bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: k8s-bundle
+          path: /tmp/k8s-bundle
+          retention-days: 1
+
       - name: Calculate duration
         id: duration
         run: |
@@ -221,7 +235,7 @@ jobs:
           DURATION=$((END_TIME - ${{ steps.start.outputs.time }}))
           echo "time=${DURATION}s" >> $GITHUB_OUTPUT
 
-  # Deploy теперь только применяет Helm chart - очень быстро!
+  # Deploy теперь только скачивает артефакты и деплоит - максимально быстро!
   deploy:
     needs: [build-docker, prepare-k8s]
     runs-on: ubuntu-latest
@@ -232,22 +246,23 @@ jobs:
         id: start
         run: echo "time=$(date +%s)" >> $GITHUB_OUTPUT
 
-      - name: Install doctl
-        uses: digitalocean/action-doctl@v2
+      - name: Download k8s bundle
+        uses: actions/download-artifact@v4
         with:
-          version: '1.142.0'
-          token: ${{ secrets.DO_TOKEN }}
-          
-      - name: Save the Kubernetes configuration
+          name: k8s-bundle
+          path: /tmp/k8s-bundle
+
+      - name: Restore k8s config
         run: |
-          mkdir -p $HOME/.kube
-          doctl kubernetes cluster kubeconfig save main
+          cp -r /tmp/k8s-bundle/.kube $HOME/
+          mkdir -p $HOME/.config $HOME/.cache
+          cp -r /tmp/k8s-bundle/helm $HOME/.config/ 2>/dev/null || true
+          cp -r /tmp/k8s-bundle/helm $HOME/.cache/ 2>/dev/null || true
+          chmod 600 $HOME/.kube/config
 
-      - name: Install Helm
-        uses: Azure/setup-helm@v4.0.0
-
-      - name: Login to Helm Repository 
-        run: helm repo add --username ${{ secrets.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_PASSWORD }} helm_repo ${{secrets.HELM_REPO}}/
+      - name: Install Helm (fast, no setup)
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
       - name: Deploy to Kubernetes with Helm
         run: |
