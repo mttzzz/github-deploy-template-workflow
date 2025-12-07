@@ -49,10 +49,6 @@ on:
           required: false
       GIT_TOKEN:
           required: false
-      AWS_ACCESS_KEY_ID:
-          required: true
-      AWS_SECRET_ACCESS_KEY:
-          required: true        
       PARAMS:
           description: 'Parameters for Helm Chart!!'
           required: false
@@ -145,19 +141,14 @@ jobs:
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: fra-1
-          AWS_ENDPOINT_URL: 'https://fra1.digitaloceanspaces.com'
         with:
           context: .
           push: true
           tags: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:latest
           labels: ${{ steps.meta.outputs.labels }}
           build-args: ${{ secrets.BUILD_ARGS }}
-          cache-from: type=s3,region=fra-1,bucket=docker-cache,endpoint_url=https://fra1.digitaloceanspaces.com,name=${{ github.repository }}
-          cache-to: type=s3,region=fra-1,bucket=docker-cache,endpoint_url=https://fra1.digitaloceanspaces.com,name=${{ github.repository }},mode=${{ inputs.cache_mode }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=${{ inputs.cache_mode }}
 
   deploy:
     needs: [build-docker]
