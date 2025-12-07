@@ -297,23 +297,23 @@ jobs:
       - name: Send Failure Telegram Message
         if: ${{ needs.build-docker.outputs.validation_error == '' && (needs.build-docker.result == 'failure' || needs.prepare-k8s.result == 'failure' || needs.deploy.result == 'failure') }}
         run: |
-          MESSAGE="━━━━━━━━━━━━━━
+          MESSAGE="━━━━━━━━━━━━━━━━━━━━
           🔴 <b>DEPLOYMENT FAILED</b>
-          ━━━━━━━━━━━━━━
+          ━━━━━━━━━━━━━━━━━━━━
 
           👤 <b>Author:</b> <code>${{ github.actor }}</code>
           📦 <b>Repo:</b> <code>${{ github.repository }}</code>
           🌿 <b>Branch:</b> <code>${{ github.ref_name }}</code>
 
-          ─────────────────────
+          ────────────────────
           💬 <b>Commit:</b>
           <a href=\"https://github.com/${{ github.repository }}/commit/${{ github.sha }}\">${{ github.event.head_commit.message }}</a>
 
-          ─────────────────────
+          ────────────────────
           ❌ <b>Failed Step:</b>
           <code>${{ steps.failed_step.outputs.step }}</code>
 
-          ─────────────────────
+          ────────────────────
           🔗 <a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">View Logs</a>"
           
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
@@ -324,24 +324,24 @@ jobs:
         if: ${{ needs.deploy.result == 'success' }}
         id: send_success
         run: |
-          MESSAGE="━━━━━━━━━━━━━━
+          MESSAGE="━━━━━━━━━━━━━━━━━━━━
           🚀 <b>DEPLOYING...</b>
-          ━━━━━━━━━━━━━━
+          ━━━━━━━━━━━━━━━━━━━━
 
           👤 <b>Author:</b> <code>${{ github.actor }}</code>
           📦 <b>Repo:</b> <code>${{ github.repository }}</code>
 
-          ─────────────────────
+          ────────────────────
           💬 <b>Commit:</b>
           <a href=\"https://github.com/${{ github.repository }}/commit/${{ github.sha }}\">${{ github.event.head_commit.message }}</a>
 
-          ─────────────────────
+          ────────────────────
           ⏱️ <b>Performance:</b>
           ├ 🐳 Build: <code>${{ needs.build-docker.outputs.duration }}</code>
           ├ ☸️ Prepare: <code>${{ needs.prepare-k8s.outputs.duration }}</code>
           └ 📤 Deploy: <code>${{ needs.deploy.outputs.duration }}</code>
 
-          ─────────────────────
+          ────────────────────
           ⏳ <b>Status:</b> Waiting for pod...
 
           🔗 <a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">View Action Run</a>"
@@ -454,22 +454,22 @@ jobs:
           
           # Формируем обновлённое сообщение
           if [ "$FINAL_STATUS" = "success" ]; then
-            HEADER="━━━━━━━━━━━━━━
+            HEADER="━━━━━━━━━━━━━━━━━━━━
           🟢 <b>DEPLOY SUCCESSFUL</b>
-          ━━━━━━━━━━━━━━"
+          ━━━━━━━━━━━━━━━━━━━━"
             STATUS_TEXT="✅ <b>Status:</b> Running"
           elif [ "$FINAL_STATUS" = "failed" ]; then
-            HEADER="━━━━━━━━━━━━━━
+            HEADER="━━━━━━━━━━━━━━━━━━━━
           🔴 <b>DEPLOY FAILED</b>
-          ━━━━━━━━━━━━━━"
+          ━━━━━━━━━━━━━━━━━━━━"
             STATUS_TEXT="❌ <b>Status:</b> Failed
 
           ⚠️ <b>Error Details:</b>
           $ERROR_MESSAGE"
           else
-            HEADER="━━━━━━━━━━━━━━
+            HEADER="━━━━━━━━━━━━━━━━━━━━
           🟡 <b>DEPLOY TIMEOUT</b>
-          ━━━━━━━━━━━━━━"
+          ━━━━━━━━━━━━━━━━━━━━"
             STATUS_TEXT="⏳ <b>Status:</b> Unknown
           Pod didn't become ready in 120s"
           fi
@@ -479,17 +479,17 @@ jobs:
           👤 <b>Author:</b> <code>${{ github.actor }}</code>
           📦 <b>Repo:</b> <code>${{ github.repository }}</code>
 
-          ─────────────────────
+          ────────────────────
           💬 <b>Commit:</b>
           <a href=\"https://github.com/${{ github.repository }}/commit/${{ github.sha }}\">${{ github.event.head_commit.message }}</a>
 
-          ─────────────────────
+          ────────────────────
           ⏱️ <b>Performance:</b>
           ├ 🐳 Build: <code>${{ needs.build-docker.outputs.duration }}</code>
           ├ ☸️ Prepare: <code>${{ needs.prepare-k8s.outputs.duration }}</code>
           └ 📤 Deploy: <code>${{ needs.deploy.outputs.duration }}</code>
 
-          ─────────────────────
+          ────────────────────
           $STATUS_TEXT
 
           🔗 <a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">View Action Run</a>"
