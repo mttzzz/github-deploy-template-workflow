@@ -180,10 +180,43 @@ jobs:
           version: '1.142.0'
           token: ${{ secrets.DO_TOKEN }}
           
-      - name: Save the Kubernetes configuration
+      - name: Get cluster credentials and create static kubeconfig
         run: |
           mkdir -p $HOME/.kube
-          doctl kubernetes cluster kubeconfig save main
+          
+          # Получаем данные кластера через doctl
+          CLUSTER_ID=$(doctl kubernetes cluster get main --format ID --no-header)
+          CLUSTER_NAME=$(doctl kubernetes cluster get main --format Name --no-header)
+          CLUSTER_ENDPOINT=$(doctl kubernetes cluster get main --format Endpoint --no-header)
+          CLUSTER_CA=$(doctl kubernetes cluster kubeconfig show main | grep certificate-authority-data | awk '{print $2}')
+          
+          # Получаем токен для аутентификации
+          ACCESS_TOKEN=$(doctl auth list --format Token --no-header 2>/dev/null || echo "${{ secrets.DO_TOKEN }}")
+          
+          # Создаём статический kubeconfig с токеном (без зависимости от doctl)
+          cat > $HOME/.kube/config << EOF
+          apiVersion: v1
+          kind: Config
+          clusters:
+          - cluster:
+              certificate-authority-data: ${CLUSTER_CA}
+              server: ${CLUSTER_ENDPOINT}
+            name: ${CLUSTER_NAME}
+          contexts:
+          - context:
+              cluster: ${CLUSTER_NAME}
+              user: ${CLUSTER_NAME}-admin
+            name: ${CLUSTER_NAME}
+          current-context: ${CLUSTER_NAME}
+          users:
+          - name: ${CLUSTER_NAME}-admin
+            user:
+              token: ${{ secrets.DO_TOKEN }}
+          EOF
+          
+          chmod 600 $HOME/.kube/config
+          echo "Static kubeconfig created successfully"
+          kubectl cluster-info
 
       - name: Install Helm
         uses: Azure/setup-helm@v4.0.0
@@ -264,12 +297,7 @@ jobs:
           chmod 600 $HOME/.kube/config
           echo "Kubeconfig restored:"
           ls -la $HOME/.kube/
-
-      - name: Install doctl (fast binary)
-        run: |
-          curl -sL https://github.com/digitalocean/doctl/releases/download/v1.104.0/doctl-1.104.0-linux-amd64.tar.gz | tar -xzv
-          sudo mv doctl /usr/local/bin/
-          doctl auth init -t ${{ secrets.DO_TOKEN }}
+          kubectl cluster-info
 
       - name: Install Helm (fast, no setup)
         run: |
