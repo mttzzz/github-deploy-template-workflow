@@ -28,6 +28,11 @@ on:
         required: false
         type: string
         default: 'min'
+      build_runner:
+        description: 'Runner for build-docker job'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
 
     secrets:
       HELM_REPO:
@@ -54,7 +59,7 @@ on:
 
 jobs:
   build-docker:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.build_runner }}
     outputs:
       docker_tag: ${{ steps.export_tag.outputs.tag }}
       duration: ${{ steps.duration.outputs.time }}
