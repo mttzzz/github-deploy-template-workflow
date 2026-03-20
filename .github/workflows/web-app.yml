@@ -173,14 +173,38 @@ jobs:
       - name: Prepare Helm parameters
         id: prepare_params
         run: |
+          validate_probe_delay() {
+            local source_name="$1"
+            local source_data="$2"
+
+            while IFS= read -r raw_line; do
+              # Trim spaces and skip empty lines.
+              line="$(echo "$raw_line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+              [[ -z "$line" ]] && continue
+
+              key="${line%%=*}"
+              value="${line#*=}"
+              case "$key" in
+                app.livenessProbe.initialDelaySeconds|app.readinessProbe.initialDelaySeconds)
+                  if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+                    echo "::error::Invalid $key value in $source_name: '$value'. Expected integer (e.g. 10)."
+                    exit 1
+                  fi
+                  ;;
+              esac
+            done <<< "$source_data"
+          }
+
           # Decode input parameters
           PARAMS_STR="${{ inputs.params }}"
           echo "Decoding input params: $PARAMS_STR"
+          validate_probe_delay "inputs.params" "$PARAMS_STR"
           INPUT_PARAMS=$(echo "$PARAMS_STR" | grep -v '^\s*$' | awk '{print "--set", $0}' ORS=' ')
           
           # Decode secret parameters
           SECRET_PARAMS_STR="${{secrets.PARAMS}}"
           echo "Decoding secrets params: $SECRET_PARAMS_STR"
+          validate_probe_delay "secrets.PARAMS" "$SECRET_PARAMS_STR"
           SECRET_PARAMS=$(echo "$SECRET_PARAMS_STR" | grep -v '^\s*$' | awk '{print "--set", $0}' ORS=' ')
           
           # Combine parameters (without image, will be added in deploy)
