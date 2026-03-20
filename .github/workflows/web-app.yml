@@ -3,7 +3,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-
 on:
   workflow_call:
     inputs:
@@ -162,7 +161,7 @@ jobs:
           kubectl cluster-info
 
       - name: Install Helm
-        uses: Azure/setup-helm@v4
+        run: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
       - name: Login to Helm Repository 
         run: helm repo add --username ${{ secrets.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_PASSWORD }} helm_repo ${{secrets.HELM_REPO}}/
