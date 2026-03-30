@@ -365,9 +365,8 @@ jobs:
   
       - name: Send Success Telegram Message
         if: ${{ needs.deploy.result == 'success' }}
-        id: send_success
         run: |
-          MESSAGE="🚀 <b>DEPLOYING...</b>
+          MESSAGE="🟢 <b>DEPLOY SUCCESSFUL</b>
 
           👤 <b>Author:</b> <code>${{ github.actor }}</code>
           📦 <b>Repo:</b> <code>${{ github.repository }}</code>
@@ -382,21 +381,13 @@ jobs:
           ├ ☸️ Prepare: <code>${{ needs.prepare-k8s.outputs.duration }}</code>
           └ 📤 Deploy: <code>${{ needs.deploy.outputs.duration }}</code>
 
-          ────────────────────
-          ⏳ <b>Status:</b> Waiting for pod...
-
           🔗 <a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">View Action Run</a>"
           
-          # Отправляем сообщение через form-urlencoded (автоматическое экранирование всех символов)
-          RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
             --data-urlencode "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
             --data-urlencode "text=$MESSAGE" \
             --data-urlencode "parse_mode=HTML" \
-            --data-urlencode "disable_web_page_preview=true")
-          
-          MESSAGE_ID=$(echo "$RESPONSE" | jq -r '.result.message_id')
-          echo "message_id=$MESSAGE_ID" >> $GITHUB_OUTPUT
-          echo "Sent message with ID: $MESSAGE_ID"
+            --data-urlencode "disable_web_page_preview=true"
 
       - name: Download k8s bundle for monitoring
         if: ${{ needs.deploy.result == 'success' }}
