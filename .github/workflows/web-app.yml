@@ -304,6 +304,27 @@ jobs:
     if: ${{ always() && (needs.build-docker.result != 'cancelled' || needs.prepare-k8s.result != 'cancelled') }}
     runs-on: ubuntu-latest
     steps:
+      - name: Prepare commit info
+        id: commit_info
+        env:
+          RAW_MSG: ${{ github.event.head_commit.message }}
+          RAW_SHA: ${{ github.sha }}
+        run: |
+          # Надёжно: только subject-строка, truncate до 200 символов, HTML-escape.
+          # Через env вниз по шагам, чтобы в bash не было GHA-интерполяции
+          # (иначе любые " ` $ из коммита ломают MESSAGE="...").
+          python3 <<'PY' >> "$GITHUB_OUTPUT"
+          import os, html
+          raw = os.environ.get("RAW_MSG", "") or ""
+          # Первая непустая строка коммита
+          first = next((ln.strip() for ln in raw.splitlines() if ln.strip()), "")
+          if len(first) > 200:
+              first = first[:200].rstrip() + "…"
+          if not first:
+              first = (os.environ.get("RAW_SHA", "") or "commit")[:7]
+          print("html=" + html.escape(first, quote=True))
+          PY
+
       - name: Send Validation Error to Telegram
         if: ${{ needs.build-docker.outputs.validation_error != '' }}
         run: |
@@ -339,6 +360,8 @@ jobs:
 
       - name: Send Failure Telegram Message
         if: ${{ needs.build-docker.outputs.validation_error == '' && (needs.build-docker.result == 'failure' || needs.prepare-k8s.result == 'failure' || needs.deploy.result == 'failure') }}
+        env:
+          COMMIT_HTML: ${{ steps.commit_info.outputs.html }}
         run: |
           MESSAGE="🔴 <b>DEPLOYMENT FAILED</b>
 
@@ -348,7 +371,7 @@ jobs:
 
           ────────────────────
           💬 <b>Commit:</b>
-          <a href=\"https://github.com/${{ github.repository }}/commit/${{ github.sha }}\">${{ github.event.head_commit.message }}</a>
+          <a href=\"https://github.com/${{ github.repository }}/commit/${{ github.sha }}\">$COMMIT_HTML</a>
 
           ────────────────────
           ❌ <b>Failed Step:</b>
@@ -365,6 +388,8 @@ jobs:
   
       - name: Send Success Telegram Message
         if: ${{ needs.deploy.result == 'success' }}
+        env:
+          COMMIT_HTML: ${{ steps.commit_info.outputs.html }}
         run: |
           MESSAGE="🟢 <b>DEPLOY SUCCESSFUL</b>
 
@@ -373,7 +398,7 @@ jobs:
 
           ────────────────────
           💬 <b>Commit:</b>
-          <a href=\"https://github.com/${{ github.repository }}/commit/${{ github.sha }}\">${{ github.event.head_commit.message }}</a>
+          <a href=\"https://github.com/${{ github.repository }}/commit/${{ github.sha }}\">$COMMIT_HTML</a>
 
           ────────────────────
           ⏱️ <b>Performance:</b>
