@@ -138,11 +138,6 @@ jobs:
           tags: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:latest
           labels: ${{ steps.meta.outputs.labels }}
           build-args: ${{ secrets.BUILD_ARGS }}
-          # GIT_TOKEN пробрасывается как BuildKit secret для `bun install`
-          # приватных git-пакетов (например, @mttzzz/nuxt-claude-infra).
-          # Dockerfile должен использовать `--mount=type=secret,id=git_token`.
-          secrets: |
-            git_token=${{ secrets.GIT_TOKEN }}
           cache-from: type=gha
           cache-to: type=gha,mode=${{ inputs.cache_mode }}
 
