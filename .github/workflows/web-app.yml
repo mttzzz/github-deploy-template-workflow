@@ -137,7 +137,9 @@ jobs:
           push: true
           tags: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:latest
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: ${{ secrets.BUILD_ARGS }}
+          build-args: |
+            ${{ secrets.BUILD_ARGS }}
+            SENTRY_RELEASE=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=${{ inputs.cache_mode }}
 
