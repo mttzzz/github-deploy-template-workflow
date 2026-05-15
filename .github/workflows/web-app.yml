@@ -309,11 +309,12 @@ jobs:
           DURATION=$((END_TIME - ${{ steps.start.outputs.time }}))
           echo "time=${DURATION}s" >> $GITHUB_OUTPUT
 
-  # Sentry release finalize: idempotent post-deploy шаг.
+  # Sentry release finalize + auto-archive предыдущих:
   # - releases new            → создаёт release (no-op если уже создан implicitly SDK или vite-plugin'ом)
-  # - releases set-commits    → линкует коммиты для suspect-commits в issues (--auto + --ignore-missing)
+  # - releases set-commits    → линкует коммиты для suspect-commits в issues (--auto нужен .git → checkout). Non-fatal.
   # - releases finalize       → выставляет dateReleased → release получает "checkmark" вместо "Finalize" в UI
   # - releases deploys ... new → отдельная запись в Releases → Deploys (production env)
+  # - archive prior releases  → API list open releases проекта → archive всё кроме current. Active filter в UI чист.
   # Пропускается если SENTRY_AUTH_TOKEN не передан или нет sentry_project/app_name.
   # Для Nuxt-проектов часть этого уже делает sentryVitePlugin на build — повтор безвреден (idempotent API).
   sentry-finalize:
@@ -321,7 +322,11 @@ jobs:
     if: ${{ needs.deploy.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Finalize Sentry release
+      - name: Checkout (для sentry-cli releases set-commits --auto — нужен локальный .git)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Finalize + archive prior Sentry releases
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: pushka-biz
@@ -338,9 +343,25 @@ jobs:
           fi
           curl -sL https://sentry.io/get-cli/ | bash
           sentry-cli releases new "$SENTRY_RELEASE"
-          sentry-cli releases set-commits "$SENTRY_RELEASE" --auto --ignore-missing
+          sentry-cli releases set-commits "$SENTRY_RELEASE" --auto --ignore-missing \
+            || echo "::warning::set-commits --auto не сработал (non-fatal — пропускаем suspect-commits)"
           sentry-cli releases finalize "$SENTRY_RELEASE"
           sentry-cli releases deploys "$SENTRY_RELEASE" new -e production
+
+          # Auto-archive: список всех open releases проекта → archive всё кроме current.
+          # API возвращает releases с участием project; archive выставляет status=archived
+          # → Active filter в UI остаётся только с current release.
+          echo "Archiving prior releases for project $SENTRY_PROJECT..."
+          curl -sfH "Authorization: Bearer $SENTRY_AUTH_TOKEN" \
+            "https://sentry.io/api/0/projects/$SENTRY_ORG/$SENTRY_PROJECT/releases/?per_page=100" \
+            | jq -r '.[].version' \
+            | while read -r v; do
+              if [ -n "$v" ] && [ "$v" != "$SENTRY_RELEASE" ]; then
+                sentry-cli releases archive "$v" \
+                  && echo "  archived $v" \
+                  || echo "::warning::archive $v failed (non-fatal)"
+              fi
+            done
 
   notify:
     needs: [build-docker, prepare-k8s, deploy]
