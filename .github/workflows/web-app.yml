@@ -33,6 +33,11 @@ on:
         required: false
         type: string
         default: 'ubuntu-latest'
+      sentry_project:
+        description: 'Sentry project slug (если отличается от app_name). Пусто → fallback на app_name. Пусто + нет SENTRY_AUTH_TOKEN → sentry-finalize пропускается.'
+        required: false
+        type: string
+        default: ''
 
     secrets:
       HELM_REPO:
@@ -59,6 +64,9 @@ on:
       DOCKERHUB_USERNAME:
           required: false
       DOCKERHUB_TOKEN:
+          required: false
+      SENTRY_AUTH_TOKEN:
+          description: 'Sentry user/org auth token для finalize-job (releases new/set-commits/finalize/deploys). Если не передан — finalize-job no-op.'
           required: false
 
 jobs:
@@ -300,6 +308,39 @@ jobs:
           END_TIME=$(date +%s)
           DURATION=$((END_TIME - ${{ steps.start.outputs.time }}))
           echo "time=${DURATION}s" >> $GITHUB_OUTPUT
+
+  # Sentry release finalize: idempotent post-deploy шаг.
+  # - releases new            → создаёт release (no-op если уже создан implicitly SDK или vite-plugin'ом)
+  # - releases set-commits    → линкует коммиты для suspect-commits в issues (--auto + --ignore-missing)
+  # - releases finalize       → выставляет dateReleased → release получает "checkmark" вместо "Finalize" в UI
+  # - releases deploys ... new → отдельная запись в Releases → Deploys (production env)
+  # Пропускается если SENTRY_AUTH_TOKEN не передан или нет sentry_project/app_name.
+  # Для Nuxt-проектов часть этого уже делает sentryVitePlugin на build — повтор безвреден (idempotent API).
+  sentry-finalize:
+    needs: [deploy]
+    if: ${{ needs.deploy.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Finalize Sentry release
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: pushka-biz
+          SENTRY_PROJECT: ${{ inputs.sentry_project != '' && inputs.sentry_project || inputs.app_name }}
+          SENTRY_RELEASE: ${{ github.sha }}
+        run: |
+          if [ -z "$SENTRY_AUTH_TOKEN" ]; then
+            echo "::notice::SENTRY_AUTH_TOKEN не передан — sentry-finalize пропущен"
+            exit 0
+          fi
+          if [ -z "$SENTRY_PROJECT" ]; then
+            echo "::notice::sentry_project/app_name пустой — sentry-finalize пропущен"
+            exit 0
+          fi
+          curl -sL https://sentry.io/get-cli/ | bash
+          sentry-cli releases new "$SENTRY_RELEASE"
+          sentry-cli releases set-commits "$SENTRY_RELEASE" --auto --ignore-missing
+          sentry-cli releases finalize "$SENTRY_RELEASE"
+          sentry-cli releases deploys "$SENTRY_RELEASE" new -e production
 
   notify:
     needs: [build-docker, prepare-k8s, deploy]
