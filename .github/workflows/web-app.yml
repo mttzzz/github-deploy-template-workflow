@@ -56,36 +56,6 @@ on:
         required: false
         type: string
         default: ''
-      # Опциональный sidecar-контейнер в поде (legacy docproc-механизм). Оставлен ДЛЯ СОВМЕСТИМОСТИ
-      # на время миграции на микросервис doc-extractor: пока app deploy.yml ещё шлёт sidecar_*, шаблон
-      # обязан их принимать (иначе текущий app-деплой падает на invalid input — класс падения gotcha #1).
-      # Образ собирается ВНУТРИ deploy-job из secrets.REGISTRY_NAME (registry-хост нельзя протащить
-      # через caller). Default пусто → sidecar не добавляется (другие проекты не затронуты).
-      sidecar_name:
-        required: false
-        type: string
-        default: ''
-      sidecar_image_suffix:
-        description: 'Суффикс repo для образа сайдкара (напр. "-docproc"): итог = REGISTRY_NAME/<repo><suffix>:<sidecar_tag>.'
-        required: false
-        type: string
-        default: ''
-      sidecar_tag:
-        required: false
-        type: string
-        default: ''
-      sidecar_port:
-        required: false
-        type: string
-        default: ''
-      sidecar_mem_request:
-        required: false
-        type: string
-        default: '128Mi'
-      sidecar_mem_limit:
-        required: false
-        type: string
-        default: '512Mi'
 
     secrets:
       HELM_REPO:
@@ -344,13 +314,7 @@ jobs:
           # image-ref собираем ЗДЕСЬ: registry-хост (secrets.REGISTRY_NAME) доступен напрямую внутри
           # deploy-job. Протащить его через caller params/outputs нельзя — GitHub зануляет любой
           # output/param, содержащий ЗНАЧЕНИЕ secret, и helm_params уходит пустым (так ронялся прод).
-          # Legacy sidecar (docproc): на время миграции на doc-extractor. Образ — тоже из REGISTRY_NAME здесь.
-          SIDECAR=""
-          if [ -n "${{ inputs.sidecar_name }}" ]; then
-            SIDECAR="--set app.sidecars[0].name=${{ inputs.sidecar_name }} --set app.sidecars[0].image=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.sidecar_image_suffix }}:${{ inputs.sidecar_tag }} --set app.sidecars[0].port=${{ inputs.sidecar_port }} --set app.sidecars[0].resources.requests.memory=${{ inputs.sidecar_mem_request }} --set app.sidecars[0].resources.limits.memory=${{ inputs.sidecar_mem_limit }}"
-          fi
-
-          FULL_PARAMS="${{ needs.prepare-k8s.outputs.helm_params }} --set app.image=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}:${{ needs.build-docker.outputs.docker_tag }} $SIDECAR"
+          FULL_PARAMS="${{ needs.prepare-k8s.outputs.helm_params }} --set app.image=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}:${{ needs.build-docker.outputs.docker_tag }}"
 
           echo "Full Params for Helm: $FULL_PARAMS"
 
