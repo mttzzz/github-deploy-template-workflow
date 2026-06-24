@@ -38,6 +38,34 @@ on:
         required: false
         type: string
         default: ''
+      # Опциональный sidecar-контейнер в поде (напр. docproc). Образ собирается ВНУТРИ deploy-job из
+      # secrets.REGISTRY_NAME — нельзя протащить registry через caller (secret-value зануляет output/params).
+      # По умолчанию пусто → sidecar не добавляется (другие проекты не затронуты). Чарт должен поддерживать app.sidecars.
+      sidecar_name:
+        required: false
+        type: string
+        default: ''
+      sidecar_image_suffix:
+        description: 'Суффикс repo для образа сайдкара (напр. "-docproc"): итог = REGISTRY_NAME/<repo><suffix>:<sidecar_tag>.'
+        required: false
+        type: string
+        default: ''
+      sidecar_tag:
+        required: false
+        type: string
+        default: ''
+      sidecar_port:
+        required: false
+        type: string
+        default: ''
+      sidecar_mem_request:
+        required: false
+        type: string
+        default: '128Mi'
+      sidecar_mem_limit:
+        required: false
+        type: string
+        default: '512Mi'
 
     secrets:
       HELM_REPO:
@@ -292,13 +320,20 @@ jobs:
 
       - name: Deploy to Kubernetes with Helm
         run: |
-          FULL_PARAMS="${{ needs.prepare-k8s.outputs.helm_params }} --set app.image=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:${{ needs.build-docker.outputs.docker_tag }}"
-          
+          # Опциональный sidecar: image собираем ЗДЕСЬ (secret REGISTRY_NAME доступен напрямую) —
+          # протащить registry через caller нельзя (secret-value зануляет output helm_params/params).
+          SIDECAR=""
+          if [ -n "${{ inputs.sidecar_name }}" ]; then
+            SIDECAR="--set app.sidecars[0].name=${{ inputs.sidecar_name }} --set app.sidecars[0].image=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.sidecar_image_suffix }}:${{ inputs.sidecar_tag }} --set app.sidecars[0].port=${{ inputs.sidecar_port }} --set app.sidecars[0].resources.requests.memory=${{ inputs.sidecar_mem_request }} --set app.sidecars[0].resources.limits.memory=${{ inputs.sidecar_mem_limit }}"
+          fi
+
+          FULL_PARAMS="${{ needs.prepare-k8s.outputs.helm_params }} --set app.image=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:${{ needs.build-docker.outputs.docker_tag }} $SIDECAR"
+
           echo "Full Params for Helm: $FULL_PARAMS"
-          
+
           # Deploy using Helm
           helm upgrade ${{ inputs.app_name }} helm_repo/${{ inputs.helm_chart }} -i $FULL_PARAMS
-          
+
           # Restart the deployment to ensure pods are updated
           kubectl rollout restart deployment ${{ inputs.app_name }}
 
