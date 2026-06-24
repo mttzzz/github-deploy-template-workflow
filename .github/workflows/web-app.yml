@@ -38,34 +38,24 @@ on:
         required: false
         type: string
         default: ''
-      # Опциональный sidecar-контейнер в поде (напр. docproc). Образ собирается ВНУТРИ deploy-job из
-      # secrets.REGISTRY_NAME — нельзя протащить registry через caller (secret-value зануляет output/params).
-      # По умолчанию пусто → sidecar не добавляется (другие проекты не затронуты). Чарт должен поддерживать app.sidecars.
-      sidecar_name:
+      # Монорепо: путь контекста сборки + Dockerfile + суффикс repo для образа — раздельные деплои
+      # app (корень) и микросервисов (services/<name>/) одним шаблоном. Default = поведение app:
+      # context=., Dockerfile в корне, без суффикса → другие проекты не затронуты.
+      docker_context:
+        description: 'Build context (монорепо-сервис → services/<name>).'
+        required: false
+        type: string
+        default: '.'
+      dockerfile:
+        description: 'Путь к Dockerfile от корня репо.'
+        required: false
+        type: string
+        default: 'Dockerfile'
+      image_suffix:
+        description: 'Суффикс repo образа (напр. "-doc-extractor"): итог = REGISTRY_NAME/<repo><suffix>:latest. НЕ секрет — registry-хост подставляется внутри job из secrets.REGISTRY_NAME, не через caller.'
         required: false
         type: string
         default: ''
-      sidecar_image_suffix:
-        description: 'Суффикс repo для образа сайдкара (напр. "-docproc"): итог = REGISTRY_NAME/<repo><suffix>:<sidecar_tag>.'
-        required: false
-        type: string
-        default: ''
-      sidecar_tag:
-        required: false
-        type: string
-        default: ''
-      sidecar_port:
-        required: false
-        type: string
-        default: ''
-      sidecar_mem_request:
-        required: false
-        type: string
-        default: '128Mi'
-      sidecar_mem_limit:
-        required: false
-        type: string
-        default: '512Mi'
 
     secrets:
       HELM_REPO:
@@ -155,7 +145,7 @@ jobs:
         id: meta        
         uses: docker/metadata-action@v6
         with:
-          images: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}
+          images: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}
           tags: |
            type=raw,value=latest
 
@@ -169,9 +159,10 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v7
         with:
-          context: .
+          context: ${{ inputs.docker_context }}
+          file: ${{ inputs.dockerfile }}
           push: true
-          tags: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:latest
+          tags: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}:latest
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             ${{ secrets.BUILD_ARGS }}
@@ -320,14 +311,10 @@ jobs:
 
       - name: Deploy to Kubernetes with Helm
         run: |
-          # Опциональный sidecar: image собираем ЗДЕСЬ (secret REGISTRY_NAME доступен напрямую) —
-          # протащить registry через caller нельзя (secret-value зануляет output helm_params/params).
-          SIDECAR=""
-          if [ -n "${{ inputs.sidecar_name }}" ]; then
-            SIDECAR="--set app.sidecars[0].name=${{ inputs.sidecar_name }} --set app.sidecars[0].image=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.sidecar_image_suffix }}:${{ inputs.sidecar_tag }} --set app.sidecars[0].port=${{ inputs.sidecar_port }} --set app.sidecars[0].resources.requests.memory=${{ inputs.sidecar_mem_request }} --set app.sidecars[0].resources.limits.memory=${{ inputs.sidecar_mem_limit }}"
-          fi
-
-          FULL_PARAMS="${{ needs.prepare-k8s.outputs.helm_params }} --set app.image=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}:${{ needs.build-docker.outputs.docker_tag }} $SIDECAR"
+          # image-ref собираем ЗДЕСЬ: registry-хост (secrets.REGISTRY_NAME) доступен напрямую внутри
+          # deploy-job. Протащить его через caller params/outputs нельзя — GitHub зануляет любой
+          # output/param, содержащий ЗНАЧЕНИЕ secret, и helm_params уходит пустым (так ронялся прод).
+          FULL_PARAMS="${{ needs.prepare-k8s.outputs.helm_params }} --set app.image=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}:${{ needs.build-docker.outputs.docker_tag }}"
 
           echo "Full Params for Helm: $FULL_PARAMS"
 
