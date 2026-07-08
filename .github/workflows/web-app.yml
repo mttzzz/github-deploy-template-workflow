@@ -122,7 +122,9 @@ jobs:
         with:
           submodules: ${{ inputs.with_submodules }}
           fetch-depth: 1
-          token: ${{ secrets.GIT_TOKEN }}
+          # GIT_TOKEN нужен только для сабмодулей в чужих приватных репо; без него — откат на
+          # встроенный GITHUB_TOKEN, которого достаточно для checkout своего (даже приватного) репо.
+          token: ${{ secrets.GIT_TOKEN || github.token }}
 
       - name: Log in to Container Registry
         uses: docker/login-action@v4
