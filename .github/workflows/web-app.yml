@@ -39,6 +39,14 @@ on:
         required: false
         type: string
         default: 'docker'
+      # Только для build_mode=host. Требует в проекте experimental.buildCache: true в nuxt.config
+      # И обязательной проверки манифеста в build:host (см. ниже) — известен баг nuxt#33999,
+      # где протухший кэш даёт 404 на чанках (белый экран). Без проверки НЕ включать.
+      build_cache:
+        description: 'Кэшировать инкрементальный build-кэш Nuxt между запусками (node_modules/.cache/nuxt).'
+        required: false
+        type: boolean
+        default: false
       build_runner:
         description: 'Runner for build-docker job'
         required: false
@@ -216,6 +224,20 @@ jobs:
       - name: Install dependencies (host)
         if: inputs.build_mode == 'host'
         run: bun install --frozen-lockfile --ignore-scripts
+
+      # Инкрементальный кэш Nuxt (experimental.buildCache). Восстанавливаем ПОСЛЕ install:
+      # кэш лежит внутри node_modules. Бенч mailer 2026-07: билд 36s → 22s, restore 1s
+      # (кэш 12MB — на порядок меньше docker-слоёв, потому и окупается). Ключ включает
+      # лок-файл: смена зависимостей инвалидирует кэш (Nuxt всё равно пересобрал бы всё).
+      - name: Restore Nuxt build cache (host)
+        if: inputs.build_mode == 'host' && inputs.build_cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules/.cache/nuxt
+          key: nuxt-buildcache-${{ hashFiles('bun.lock') }}-${{ github.sha }}
+          restore-keys: |
+            nuxt-buildcache-${{ hashFiles('bun.lock') }}-
+            nuxt-buildcache-
 
       - name: Build application (host)
         if: inputs.build_mode == 'host'
