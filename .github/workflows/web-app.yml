@@ -114,6 +114,12 @@ jobs:
         shell: bash
     outputs:
       docker_tag: ${{ steps.export_tag.outputs.tag }}
+      # Digest только что запушенного образа. Деплой ссылается на образ по digest, а не по
+      # :latest — тогда pod spec меняется каждый деплой и роллаут стартует сам, без лишнего
+      # `kubectl rollout restart` (−5s). Теги при этом не копятся, а старые слои подчищает GC
+      # регистри. Digest НЕ секрет; полный ref собирается в deploy-job, где доступен
+      # secrets.REGISTRY_NAME (GitHub зануляет любой output со значением секрета).
+      image_digest: ${{ steps.push_docker.outputs.digest || steps.push_host.outputs.digest }}
       duration: ${{ steps.duration.outputs.time }}
       validation_error: ${{ steps.validate.outputs.error }}
     steps:
@@ -200,6 +206,7 @@ jobs:
           echo "Using tag: latest"
 
       - name: Build and push Docker image
+        id: push_docker
         if: inputs.build_mode != 'host'
         uses: docker/build-push-action@v7
         with:
@@ -258,6 +265,7 @@ jobs:
       # пушер dockerd (docker push и buildx на default-builder) DOCR отвергает
       # с manifest invalid независимо от формата манифеста — проверено бенчем.
       - name: Package and push image (host)
+        id: push_host
         if: inputs.build_mode == 'host'
         uses: docker/build-push-action@v7
         with:
@@ -306,7 +314,9 @@ jobs:
           kubectl cluster-info
 
       - name: Install Helm
-        run: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+        # На GitHub-hosted раннерах helm предустановлен — качаем только если его нет
+        # (самостоятельный раннер / урезанный образ). Экономит ~7s биллинга на прогон.
+        run: command -v helm > /dev/null || curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
       - name: Login to Helm Repository 
         run: helm repo add --username ${{ secrets.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_PASSWORD }} helm_repo ${{secrets.HELM_REPO}}/
@@ -411,15 +421,29 @@ jobs:
           # image-ref собираем ЗДЕСЬ: registry-хост (secrets.REGISTRY_NAME) доступен напрямую внутри
           # deploy-job. Протащить его через caller params/outputs нельзя — GitHub зануляет любой
           # output/param, содержащий ЗНАЧЕНИЕ secret, и helm_params уходит пустым (так ронялся прод).
-          FULL_PARAMS="${{ needs.prepare-k8s.outputs.helm_params }} --set app.image=${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}:${{ needs.build-docker.outputs.docker_tag }}"
+          REPO_REF="${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}"
+          DIGEST="${{ needs.build-docker.outputs.image_digest }}"
 
+          # Основной путь: ссылка по digest. Спека пода меняется каждый деплой → роллаут
+          # стартует сам. Fallback на :latest + явный рестарт — если digest почему-то пуст
+          # (иначе получили бы битый image-ref и сломанный деплой).
+          if [[ -n "$DIGEST" ]]; then
+            IMAGE_REF="${REPO_REF}@${DIGEST}"
+            NEED_RESTART=""
+          else
+            echo "::warning::digest пуст — деплой по :latest с явным рестартом (fallback)"
+            IMAGE_REF="${REPO_REF}:${{ needs.build-docker.outputs.docker_tag }}"
+            NEED_RESTART="1"
+          fi
+
+          FULL_PARAMS="${{ needs.prepare-k8s.outputs.helm_params }} --set app.image=${IMAGE_REF}"
           echo "Full Params for Helm: $FULL_PARAMS"
 
-          # Deploy using Helm
           helm upgrade ${{ inputs.app_name }} helm_repo/${{ inputs.helm_chart }} -i $FULL_PARAMS
 
-          # Restart the deployment to ensure pods are updated
-          kubectl rollout restart deployment ${{ inputs.app_name }}
+          if [[ -n "$NEED_RESTART" ]]; then
+            kubectl rollout restart deployment ${{ inputs.app_name }}
+          fi
 
       - name: Calculate duration
         id: duration
