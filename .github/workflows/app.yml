@@ -14,6 +14,11 @@ on:
         required: false
         type: string
         default: 'app'
+      chart_version:
+        description: 'Chart version semver-констрейнт (1.x = последний 1.x из zot)'
+        required: false
+        type: string
+        default: '1.x'
       params:
         description: 'Parameters for Helm Chart'
         required: false
@@ -318,11 +323,10 @@ jobs:
         # (самостоятельный раннер / урезанный образ). Экономит ~7s биллинга на прогон.
         run: command -v helm > /dev/null || curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
-      - name: Login to Helm Repository 
-        run: helm repo add --username ${{ secrets.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_PASSWORD }} helm_repo ${{secrets.HELM_REPO}}/
-    
-      - name: Update Helm Repository 
-        run: helm repo update helm_repo
+      - name: Login to OCI Registry (zot)
+        # Чарты — OCI-артефакты в zot; chartmuseum выведен из эксплуатации.
+        run: helm registry login zot.pushka.biz --username ${{ secrets.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_PASSWORD }}
+
 
       - name: Prepare Helm parameters
         id: prepare_params
@@ -439,7 +443,7 @@ jobs:
           FULL_PARAMS="${{ needs.prepare-k8s.outputs.helm_params }} --set app.image=${IMAGE_REF}"
           echo "Full Params for Helm: $FULL_PARAMS"
 
-          helm upgrade ${{ inputs.app_name }} helm_repo/${{ inputs.helm_chart }} -i $FULL_PARAMS
+          helm upgrade ${{ inputs.app_name }} oci://zot.pushka.biz/charts/${{ inputs.helm_chart }} --version "${{ inputs.chart_version }}" -i $FULL_PARAMS
 
           if [[ -n "$NEED_RESTART" ]]; then
             kubectl rollout restart deployment ${{ inputs.app_name }}
