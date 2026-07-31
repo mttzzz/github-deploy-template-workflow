@@ -80,6 +80,26 @@ on:
         required: false
         type: string
         default: ''
+      # Opt-in (ai.pushka.biz): публикация immutable-ассетов билда (_nuxt/_fonts) в Spaces CDN
+      # ШАГОМ ПАЙПЛАЙНА после build, а не на старте пода (инцидент 31.07: blind PUT 1548 файлов
+      # из пода = 88s и crash-loop под startup probe; с раннера ~12s при concurrency=32).
+      # Только build_mode=host: шаг работает по .output/public в workspace. Требует в репо
+      # scripts/publish-assets.ts и secrets DO_SPACES_KEY/DO_SPACES_SECRET.
+      publish_assets_cdn:
+        description: 'Публиковать ассеты билда в Spaces CDN шагом после host-build.'
+        required: false
+        type: boolean
+        default: false
+      publish_assets_bucket:
+        description: 'Бакет Spaces для ассетов (при publish_assets_cdn=true).'
+        required: false
+        type: string
+        default: ''
+      publish_assets_url:
+        description: 'Endpoint Spaces (host, без https://).'
+        required: false
+        type: string
+        default: 'fra1.digitaloceanspaces.com'
 
     secrets:
       HELM_REPO:
@@ -109,6 +129,12 @@ on:
           required: false
       SENTRY_AUTH_TOKEN:
           description: 'Sentry user/org auth token для finalize-job (releases new/set-commits/finalize/deploys). Если не передан — finalize-job no-op.'
+          required: false
+      DO_SPACES_KEY:
+          description: 'Spaces access key для publish_assets_cdn. Без пары шаг публикации падает явно.'
+          required: false
+      DO_SPACES_SECRET:
+          description: 'Spaces secret key для publish_assets_cdn.'
           required: false
 
 jobs:
@@ -279,6 +305,22 @@ jobs:
           push: true
           tags: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}:latest
           labels: ${{ steps.meta.outputs.labels }}
+
+      # Публикация immutable-ассетов ПОСЛЕДНИМ шагом build-job: deploy-job needs build-docker,
+      # поэтому падение заливки = красный деплой ДО helm — поды не получат трафик, пока чанков
+      # их билда нет в бакете (ordering-инвариант). Полный blind PUT всегда (НЕ delta): повторная
+      # заливка неизменных чанков — это mark для GC-sweep'а (LastModified живых файлов свежий).
+      # cwd=.output: publish-assets.ts читает ./public относительно cwd (как в старом pod-старте).
+      - name: Publish build assets to CDN (host)
+        if: inputs.build_mode == 'host' && inputs.publish_assets_cdn
+        working-directory: .output
+        env:
+          NUXT_DO_SPACES_BUCKET: ${{ inputs.publish_assets_bucket }}
+          NUXT_DO_SPACES_URL: ${{ inputs.publish_assets_url }}
+          NUXT_DO_SPACES_KEY: ${{ secrets.DO_SPACES_KEY }}
+          NUXT_DO_SPACES_SECRET: ${{ secrets.DO_SPACES_SECRET }}
+          PUBLISH_CONCURRENCY: '32'
+        run: bun ../scripts/publish-assets.ts
 
       - name: Calculate duration
         id: duration
