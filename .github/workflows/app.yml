@@ -448,6 +448,10 @@ jobs:
         id: start
         run: echo "time=$(date +%s)" >> $GITHUB_OUTPUT
 
+      # Checkout нужен для современного пути: deploy/values.yaml из репо приложения.
+      - name: Checkout
+        uses: actions/checkout@v6
+
       - name: Download k8s bundle
         uses: actions/download-artifact@v8
         with:
@@ -482,10 +486,17 @@ jobs:
             NEED_RESTART="1"
           fi
 
-          FULL_PARAMS="${{ needs.prepare-k8s.outputs.helm_params }} --set app.image=${IMAGE_REF}"
-          echo "Full Params for Helm: $FULL_PARAMS"
+          if [ -f deploy/values.yaml ]; then
+            # Современный путь: типизированный values-файл из репо приложения.
+            # Источник истины — файл; input params при этом игнорируются.
+            echo "deploy/values.yaml найден — деплой через -f (input params игнорируются)"
+            helm upgrade ${{ inputs.app_name }} oci://zot.pushka.biz/charts/${{ inputs.helm_chart }} --version "${{ inputs.chart_version }}" -i -f deploy/values.yaml --set app.image=${IMAGE_REF}
+          else
+            FULL_PARAMS="${{ needs.prepare-k8s.outputs.helm_params }} --set app.image=${IMAGE_REF}"
+            echo "Full Params for Helm: $FULL_PARAMS"
 
-          helm upgrade ${{ inputs.app_name }} oci://zot.pushka.biz/charts/${{ inputs.helm_chart }} --version "${{ inputs.chart_version }}" -i $FULL_PARAMS
+            helm upgrade ${{ inputs.app_name }} oci://zot.pushka.biz/charts/${{ inputs.helm_chart }} --version "${{ inputs.chart_version }}" -i $FULL_PARAMS
+          fi
 
           if [[ -n "$NEED_RESTART" ]]; then
             kubectl rollout restart deployment ${{ inputs.app_name }}
