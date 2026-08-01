@@ -486,11 +486,13 @@ jobs:
             NEED_RESTART="1"
           fi
 
-          if [ -f deploy/values.yaml ]; then
+          VALUES_FILE="deploy/values${{ inputs.image_suffix }}.yaml"
+          if [ -f "$VALUES_FILE" ]; then
             # Современный путь: типизированный values-файл из репо приложения.
             # Источник истины — файл; input params при этом игнорируются.
-            echo "deploy/values.yaml найден — деплой через -f (input params игнорируются)"
-            helm upgrade ${{ inputs.app_name }} oci://zot.pushka.biz/charts/${{ inputs.helm_chart }} --version "${{ inputs.chart_version }}" -i -f deploy/values.yaml --set app.image=${IMAGE_REF}
+            # Монорепо: файл на сервис — deploy/values<image_suffix>.yaml.
+            echo "$VALUES_FILE найден — деплой через -f (input params игнорируются)"
+            helm upgrade ${{ inputs.app_name }} oci://zot.pushka.biz/charts/${{ inputs.helm_chart }} --version "${{ inputs.chart_version }}" -i -f "$VALUES_FILE" --set app.image=${IMAGE_REF}
           else
             FULL_PARAMS="${{ needs.prepare-k8s.outputs.helm_params }} --set app.image=${IMAGE_REF}"
             echo "Full Params for Helm: $FULL_PARAMS"
