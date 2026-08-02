@@ -150,7 +150,9 @@ jobs:
       # `kubectl rollout restart` (−5s). Теги при этом не копятся, а старые слои подчищает GC
       # регистри. Digest НЕ секрет; полный ref собирается в deploy-job, где доступен
       # secrets.REGISTRY_NAME (GitHub зануляет любой output со значением секрета).
-      image_digest: ${{ steps.push_docker.outputs.digest || steps.push_host.outputs.digest }}
+      # Ретрай-шаги идут в цепочке ПОСЛЕ своей первой попытки: если та упала на пуше, digest
+      # несёт повтор. Пустой output ложен для `||`, поэтому побеждает первый непустой.
+      image_digest: ${{ steps.push_docker.outputs.digest || steps.push_docker_retry.outputs.digest || steps.push_host.outputs.digest || steps.push_host_retry.outputs.digest }}
       duration: ${{ steps.duration.outputs.time }}
       validation_error: ${{ steps.validate.outputs.error }}
     steps:
@@ -236,9 +238,31 @@ jobs:
           echo "tag=latest" >> $GITHUB_OUTPUT
           echo "Using tag: latest"
 
+      # Пуш в реестр — единственный шаг, который штатно рвётся не по нашей вине: реестр может
+      # оборвать сессию блоб-аплоада (zot до 2026-08 резал ЛЮБОЙ запрос дольше 60s дефолтным
+      # http.readTimeout и удалял .uploads/ — клиент получал blob upload unknown; DOCR отдаёт то
+      # же на своих сбоях). buildx ретраев не делает. Поэтому: попытка + повтор по её провалу.
+      # Слои уже в кэше, повтор стоит секунды. Цена — настоящий сбой сборки прогоняется дважды.
       - name: Build and push Docker image
         id: push_docker
         if: inputs.build_mode != 'host'
+        continue-on-error: true
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ inputs.docker_context }}
+          file: ${{ inputs.dockerfile }}
+          push: true
+          tags: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}:latest
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            ${{ secrets.BUILD_ARGS }}
+            SENTRY_RELEASE=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=${{ inputs.cache_mode }}
+
+      - name: Build and push Docker image (retry)
+        id: push_docker_retry
+        if: inputs.build_mode != 'host' && steps.push_docker.outcome == 'failure'
         uses: docker/build-push-action@v7
         with:
           context: ${{ inputs.docker_context }}
@@ -298,6 +322,20 @@ jobs:
       - name: Package and push image (host)
         id: push_host
         if: inputs.build_mode == 'host'
+        continue-on-error: true
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.host
+          push: true
+          tags: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}:latest
+          labels: ${{ steps.meta.outputs.labels }}
+
+      # Здесь повтор дёшев вдвойне: bun-сборка уже прошла отдельным шагом выше, docker только
+      # пакует готовый .output — ретраится ровно упаковка и заливка слоёв.
+      - name: Package and push image (host, retry)
+        id: push_host_retry
+        if: inputs.build_mode == 'host' && steps.push_host.outcome == 'failure'
         uses: docker/build-push-action@v7
         with:
           context: .
