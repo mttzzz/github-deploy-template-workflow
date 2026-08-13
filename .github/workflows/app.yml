@@ -273,11 +273,8 @@ jobs:
           build-args: |
             ${{ secrets.BUILD_ARGS }}
             SENTRY_RELEASE=${{ github.sha }}
-          # Scope на приложение: без него все сервисы монорепо пишут в один кэш GHA и
-          # вытесняют друг друга — apt-слои каждого (chromium, libreoffice, python-стек)
-          # пересобирались почти каждый раз (замер 13.08: filegen 485 s, omp-chat 549 s).
-          cache-from: type=gha,scope=${{ inputs.app_name }}
-          cache-to: type=gha,mode=${{ inputs.cache_mode }},scope=${{ inputs.app_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=${{ inputs.cache_mode }}
 
       # === build_mode: host — build приложения на раннере, docker только пакует .output ===
       - name: Set up Bun
@@ -322,11 +319,6 @@ jobs:
       # Пуш ТОЛЬКО через container-driver buildkit (Prepare buildx выше): движковый
       # пушер dockerd (docker push и buildx на default-builder) DOCR отвергает
       # с manifest invalid независимо от формата манифеста — проверено бенчем.
-      # Кэш обязателен: container-driver buildkit стартует пустым, поэтому RUN-слои
-      # Dockerfile.host (у приложений это apk add chromium + шрифты + ffmpeg — сотни мегабайт
-      # пакетов) выполнялись НА КАЖДЫЙ деплой. Замер ai.pushka.biz 13.08: упаковка+пуш 317 s
-      # при сборке приложения 81 s. Scope на приложение — иначе монорепо-сервисы вытесняют
-      # кэш друг друга.
       - name: Package and push image (host)
         id: push_host
         if: inputs.build_mode == 'host'
@@ -351,8 +343,6 @@ jobs:
           push: true
           tags: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}:latest
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=host-package-${{ inputs.app_name }}
-          cache-to: type=gha,mode=max,scope=host-package-${{ inputs.app_name }}
 
       # Публикация immutable-ассетов ПОСЛЕДНИМ шагом build-job: deploy-job needs build-docker,
       # поэтому падение заливки = красный деплой ДО helm — поды не получат трафик, пока чанков
