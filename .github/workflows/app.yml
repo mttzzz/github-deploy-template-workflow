@@ -62,6 +62,11 @@ on:
         required: false
         type: string
         default: ''
+      sentry_finalize:
+        description: 'Финализировать Sentry-релиз после деплоя. Сервисы без своего Sentry-проекта выставляют false — иначе каждый их ран получает notice «SENTRY_AUTH_TOKEN не передан».'
+        required: false
+        type: boolean
+        default: true
       # Монорепо: путь контекста сборки + Dockerfile + суффикс repo для образа — раздельные деплои
       # app (корень) и микросервисов (services/<name>/) одним шаблоном. Default = поведение app:
       # context=., Dockerfile в корне, без суффикса → другие проекты не затронуты.
@@ -555,11 +560,12 @@ jobs:
   # - releases finalize       → выставляет dateReleased → release получает "checkmark" вместо "Finalize" в UI
   # - releases deploys ... new → отдельная запись в Releases → Deploys (production env)
   # - archive prior releases  → API list open releases проекта → archive всё кроме current. Active filter в UI чист.
-  # Пропускается если SENTRY_AUTH_TOKEN не передан или нет sentry_project/app_name.
+  # Пропускается если sentry_finalize=false (сервисы без Sentry-проекта), SENTRY_AUTH_TOKEN
+  # не передан или нет sentry_project/app_name.
   # Для Nuxt-проектов часть этого уже делает sentryVitePlugin на build — повтор безвреден (idempotent API).
   sentry-finalize:
     needs: [deploy]
-    if: ${{ needs.deploy.result == 'success' }}
+    if: ${{ inputs.sentry_finalize && needs.deploy.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (для sentry-cli releases set-commits --auto — нужен локальный .git)
