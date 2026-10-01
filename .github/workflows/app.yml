@@ -262,8 +262,13 @@ jobs:
           build-args: |
             ${{ secrets.BUILD_ARGS }}
             SENTRY_RELEASE=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=${{ inputs.cache_mode }}
+          # Scope на приложение: без него все сервисы монорепо пишут в один кэш GHA (`buildkit`) и
+          # затирают друг другу индекс — omp-chat ai.pushka.biz попадал в кэш в 2 сборках из 6.
+          # Замер 01.10: шаг сборки с попаданием 53–62 с, с промахом 297–309 с — держит его пуш
+          # ~1 ГБ пересобранных слоёв (148 с), экспорт кэша (104–116 с) идёт параллельно пушу и
+          # кончается раньше. Откат 0735fcb касался упаковки build_mode=host, этот шаг он снял заодно.
+          cache-from: type=gha,scope=${{ inputs.app_name }}
+          cache-to: type=gha,mode=${{ inputs.cache_mode }},scope=${{ inputs.app_name }}
 
       - name: Build and push Docker image (retry)
         id: push_docker_retry
@@ -278,8 +283,8 @@ jobs:
           build-args: |
             ${{ secrets.BUILD_ARGS }}
             SENTRY_RELEASE=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=${{ inputs.cache_mode }}
+          cache-from: type=gha,scope=${{ inputs.app_name }}
+          cache-to: type=gha,mode=${{ inputs.cache_mode }},scope=${{ inputs.app_name }}
 
       # === build_mode: host — build приложения на раннере, docker только пакует .output ===
       - name: Set up Bun
