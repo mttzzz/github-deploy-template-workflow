@@ -541,6 +541,22 @@ jobs:
             # Монорепо: файл на сервис — deploy/values<image_suffix>.yaml.
             echo "$VALUES_FILE найден — деплой через -f (input params игнорируются)"
             helm upgrade ${{ inputs.app_name }} oci://zot.pushka.biz/charts/${{ inputs.helm_chart }} --version "${{ inputs.chart_version }}" -i -f "$VALUES_FILE" --set app.image=${IMAGE_REF}
+
+            # Доп. релизы того же образа (воркеры в отдельных подах): deploy/release<image_suffix>.<имя>.yaml.
+            # <имя> из имени файла = имя helm-релиза = app.name внутри файла (по нему же идёт рестарт
+            # deployment). Файлов нет — цикл не выполняется ни разу, поведение прежнее. Удаление файла
+            # релиз из кластера НЕ снимает: `helm uninstall <имя>` — руками.
+            shopt -s nullglob
+            for f in deploy/release${{ inputs.image_suffix }}.*.yaml; do
+              name=$(basename "$f" .yaml)
+              name=${name#release${{ inputs.image_suffix }}.}
+              echo "$f найден — доп. релиз $name того же образа"
+              helm upgrade "$name" oci://zot.pushka.biz/charts/${{ inputs.helm_chart }} --version "${{ inputs.chart_version }}" -i -f "$f" --set app.image=${IMAGE_REF}
+              if [[ -n "$NEED_RESTART" ]]; then
+                kubectl rollout restart deployment "$name"
+              fi
+            done
+            shopt -u nullglob
           else
             FULL_PARAMS="${{ needs.prepare-k8s.outputs.helm_params }} --set app.image=${IMAGE_REF}"
             echo "Full Params for Helm: $FULL_PARAMS"
