@@ -545,12 +545,14 @@ jobs:
           fi
 
           VALUES_FILE="deploy/values${{ inputs.image_suffix }}.yaml"
+          # --history-max 3: Helm хранит каждую ревизию релиза секретом (по умолчанию 10 на релиз). 2026-10-17 в
+          # кластере было 334 таких секрета, 22 МиБ, и API-сервер DOKS держит их все в памяти; на откат хватает трёх.
           if [ -f "$VALUES_FILE" ]; then
             # Современный путь: типизированный values-файл из репо приложения.
             # Источник истины — файл; input params при этом игнорируются.
             # Монорепо: файл на сервис — deploy/values<image_suffix>.yaml.
             echo "$VALUES_FILE найден — деплой через -f (input params игнорируются)"
-            helm upgrade ${{ inputs.app_name }} oci://zot.pushka.biz/charts/${{ inputs.helm_chart }} --version "${{ inputs.chart_version }}" -i -f "$VALUES_FILE" --set app.image=${IMAGE_REF}
+            helm upgrade ${{ inputs.app_name }} oci://zot.pushka.biz/charts/${{ inputs.helm_chart }} --version "${{ inputs.chart_version }}" -i --history-max 3 -f "$VALUES_FILE" --set app.image=${IMAGE_REF}
 
             # Доп. релизы того же образа (воркеры в отдельных подах): deploy/release<image_suffix>.<имя>.yaml.
             # <имя> из имени файла = имя helm-релиза = app.name внутри файла (по нему же идёт рестарт
@@ -561,7 +563,7 @@ jobs:
               name=$(basename "$f" .yaml)
               name=${name#release${{ inputs.image_suffix }}.}
               echo "$f найден — доп. релиз $name того же образа"
-              helm upgrade "$name" oci://zot.pushka.biz/charts/${{ inputs.helm_chart }} --version "${{ inputs.chart_version }}" -i -f "$f" --set app.image=${IMAGE_REF}
+              helm upgrade "$name" oci://zot.pushka.biz/charts/${{ inputs.helm_chart }} --version "${{ inputs.chart_version }}" -i --history-max 3 -f "$f" --set app.image=${IMAGE_REF}
               if [[ -n "$NEED_RESTART" ]]; then
                 kubectl rollout restart deployment "$name"
               fi
@@ -571,7 +573,7 @@ jobs:
             FULL_PARAMS="${{ needs.prepare-k8s.outputs.helm_params }} --set app.image=${IMAGE_REF}"
             echo "Full Params for Helm: $FULL_PARAMS"
 
-            helm upgrade ${{ inputs.app_name }} oci://zot.pushka.biz/charts/${{ inputs.helm_chart }} --version "${{ inputs.chart_version }}" -i $FULL_PARAMS
+            helm upgrade ${{ inputs.app_name }} oci://zot.pushka.biz/charts/${{ inputs.helm_chart }} --version "${{ inputs.chart_version }}" -i --history-max 3 $FULL_PARAMS
           fi
 
           if [[ -n "$NEED_RESTART" ]]; then
