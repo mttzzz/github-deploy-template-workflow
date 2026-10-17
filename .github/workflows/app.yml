@@ -44,6 +44,16 @@ on:
         required: false
         type: string
         default: 'docker'
+      # Только для build_mode=host: версия Bun, которой раннер ставит зависимости и собирает .output.
+      # Рантайм образа пинует свою (FROM в Dockerfile.host / базе), а `latest` резолвится в момент
+      # сборки: в день релиза Bun сборка шла бы новой версией, исполнение — старой, и смена версии
+      # приезжала бы в прод без коммита в репо. Репо с пином передаёт ту же X.Y.Z, что в образе.
+      # Default `latest` — прежнее поведение для репо, которые версию не пинуют.
+      bun_version:
+        description: 'Версия Bun для build_mode=host (bun-version у setup-bun): точная X.Y.Z, как у рантайма образа. Default latest.'
+        required: false
+        type: string
+        default: 'latest'
       # Только для build_mode=host. Требует в проекте experimental.buildCache: true в nuxt.config
       # И обязательной проверки манифеста в build:host (см. ниже) — известен баг nuxt#33999,
       # где протухший кэш даёт 404 на чанках (белый экран). Без проверки НЕ включать.
@@ -291,7 +301,7 @@ jobs:
         if: inputs.build_mode == 'host'
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: ${{ inputs.bun_version }}
 
       - name: Install dependencies (host)
         if: inputs.build_mode == 'host'
