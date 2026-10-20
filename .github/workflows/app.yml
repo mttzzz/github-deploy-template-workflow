@@ -1,7 +1,11 @@
 name: deploy template
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # helm_atomic: деплой ждёт готовности подов (`helm upgrade --wait`, до helm_timeout), и следующий пуш не
+  # должен его отменять: SIGINT посреди ожидания оставляет релиз в pending-upgrade, откат не успевает
+  # дойти до конца. Поэтому такие деплои встают в очередь друг за другом. Без helm_atomic — прежнее
+  # поведение (устаревший деплой отменяется следующим пушем).
+  cancel-in-progress: ${{ !inputs.helm_atomic }}
 
 on:
   workflow_call:
@@ -115,6 +119,22 @@ on:
         required: false
         type: string
         default: 'fra1.digitaloceanspaces.com'
+
+      # Выкатка с ожиданием (opt-in). Без неё `helm upgrade` возвращается, как только манифесты применены, и
+      # CrashLoop нового образа даёт зелёный деплой. С ней helm ждёт готовности подов НОВОЙ ревизии и при
+      # провале откатывает релиз: красный деплой = релиз не сменился, и уведомление в Telegram говорит об этом
+      # прямо. cancel-in-progress при этом выключен (см. concurrency). Заодно включается якорь отката
+      # `:deployed` (шаги Anchor и Pin): прежний digest не теряет тег и после отката.
+      helm_atomic:
+        description: 'helm upgrade с ожиданием готовности и откатом при провале: --wait --timeout helm_timeout + откат (Helm 3: --atomic, Helm 4: --rollback-on-failure; флаг выбирается по версии helm на раннере). Отключает cancel-in-progress: деплои встают в очередь. Включает якорь отката :deployed.'
+        required: false
+        type: boolean
+        default: false
+      helm_timeout:
+        description: 'Потолок ожидания для helm_atomic (--timeout, Go-длительность) на КАЖДЫЙ helm upgrade деплоя; откат после провала ждёт готовности подов с тем же потолком. kubeconfig из prepare-k8s живёт 3600 с, поэтому сборка + 2 × helm_timeout на каждый релиз (ожидание и откат) должны в них укладываться: при 15m и одном релизе сборка может занять до 30 минут.'
+        required: false
+        type: string
+        default: '15m'
 
     secrets:
       HELM_REPO:
@@ -472,6 +492,94 @@ jobs:
           echo "$BASE_PARAMS" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
+      # Якорь отката (opt-in: helm_atomic). Сборка (job build-docker) перевесит :latest на новый digest ДО вердикта
+      # helm, а прод тем временем работает на прежнем digest, который под держит по `@sha256` (imagePullPolicy:
+      # Always — каждый запуск контейнера спрашивает реестр). zot (gc: true, gcDelay: 1h, retention не задан)
+      # удаляет манифесты без тега, поэтому после отката helm (или упавшей выкатки) прежний digest терял бы
+      # единственный тег и через 1–25 часов исчезал: рестарт, скейл или выселение пода давали бы ImagePullBackOff.
+      # Тег :deployed ставит job deploy после УСПЕШНОГО helm upgrade. Здесь — один раз, для первой сборки образа
+      # с helm_atomic, у которого :deployed ещё нет: на digest, который РЕАЛЬНО крутится в кластере (образ контейнера
+      # приложения в Deployment, а при деплое «по :latest» — imageID контейнера в поде), а не на :latest: тот мог
+      # уехать вперёд, если прошлый деплой упал или был отменён. Порядок относительно сборки не важен: digest
+      # берётся из кластера, а zot держит безтеговые манифесты ещё gcDelay. Сбой реестра отличается от «тега нет»:
+      # на сбое (после трёх попыток) шаг красный, а не молча переставляет якорь.
+      - name: Login to Container Registry (якорь отката)
+        if: ${{ inputs.helm_atomic }}
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ secrets.REGISTRY_NAME }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Anchor deployed image as :deployed (bootstrap)
+        if: ${{ inputs.helm_atomic }}
+        env:
+          REPO_REF: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}
+          APP_NAME: ${{ inputs.app_name }}
+        run: |
+          # Проверка манифеста с повтором: единичный сбой реестра или сети не должен красить prepare-k8s.
+          # 0 — манифест есть, 1 — реестр ответил «нет такого», 2 — реестр не ответил за три попытки.
+          probe() {
+            local out attempt
+            for attempt in 1 2 3; do
+              if out=$(docker buildx imagetools inspect "$1" 2>&1); then
+                return 0
+              fi
+              if grep -qiE 'not found|manifest unknown|name unknown' <<< "$out"; then
+                return 1
+              fi
+              echo "::warning::imagetools inspect $1: попытка $attempt из 3: $out" >&2
+              if (( attempt < 3 )); then sleep $((attempt * 2)); fi
+            done
+            echo "::error::реестр не ответил на проверку $1: $out" >&2
+            return 2
+          }
+
+          rc=0
+          probe "${REPO_REF}:deployed" || rc=$?
+          if [[ $rc -eq 0 ]]; then
+            echo "якорь :deployed уже есть — ничего не делаем"
+            exit 0
+          elif [[ $rc -ne 1 ]]; then
+            exit 1
+          fi
+
+          # Что реально крутится в кластере. helm ставит образ по @sha256; деплой «по :latest» (digest пуст) задаёт
+          # его тегом — тогда digest берём из imageID работающего пода. Контейнер приложения выбирается ПО ИМЕНИ (чарт
+          # app называет его app.name, как и Deployment): kubelet отдаёт containerStatuses отсортированными по имени, а
+          # не в порядке spec, поэтому у пода с сайдкаром (app.sidecars) [0] — чужой контейнер. Ошибка kubectl (в
+          # отличие от «Deployment нет») роняет шаг: молча пропустить якорь при недоступном API значило бы вернуть
+          # риск, ради которого он есть.
+          IMAGE=$(kubectl get deployment "$APP_NAME" --ignore-not-found -o jsonpath="{.spec.template.spec.containers[?(@.name==\"${APP_NAME}\")].image}")
+          DIGEST=$(grep -oE 'sha256:[0-9a-f]{64}$' <<< "$IMAGE" || true)
+          if [[ -z "$DIGEST" && -n "$IMAGE" ]]; then
+            IDS=$(kubectl get pods -l "app=$APP_NAME" -o jsonpath="{.items[*].status.containerStatuses[?(@.name==\"${APP_NAME}\")].imageID}")
+            DIGEST=$(tr ' ' '\n' <<< "$IDS" | grep -oE 'sha256:[0-9a-f]{64}$' | head -n 1 || true)
+          fi
+          if [[ -z "$DIGEST" ]]; then
+            echo "::notice::в кластере образа ${APP_NAME} нет (Deployment или контейнер с таким именем не найден: имя Deployment — app.name из values, оно должно совпадать с app_name) — якорь поставит первый успешный деплой"
+            exit 0
+          fi
+
+          rc=0
+          probe "${REPO_REF}@${DIGEST}" || rc=$?
+          if [[ $rc -eq 1 ]]; then
+            echo "::warning::digest ${DIGEST} из кластера (${APP_NAME}) уже удалён из реестра — якорь поставить не на что, ближайший успешный деплой заменит образ"
+            exit 0
+          elif [[ $rc -ne 0 ]]; then
+            exit 1
+          fi
+
+          for attempt in 1 2 3; do
+            if docker buildx imagetools create --prefer-index=false --tag "${REPO_REF}:deployed" "${REPO_REF}@${DIGEST}"; then
+              echo "якорь :deployed → ${DIGEST} (digest из кластера, первая сборка образа с helm_atomic)"
+              exit 0
+            fi
+            sleep $((attempt * 3))
+          done
+          echo "::error::не удалось поставить якорь :deployed на ${DIGEST}"
+          exit 1
+
       - name: Package k8s config for deploy
         run: |
           mkdir -p /tmp/k8s-bundle
@@ -501,6 +609,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       duration: ${{ steps.duration.outputs.time }}
+      pin_failed: ${{ steps.pin_anchor.outputs.failed }}
     steps:
       - name: Start timer
         id: start
@@ -544,6 +653,20 @@ jobs:
             NEED_RESTART="1"
           fi
 
+          # helm_atomic: ожидание готовности подов новой ревизии и откат при провале. Откат у Helm 3 — --atomic,
+          # у Helm 4 он переименован в --rollback-on-failure (--atomic там — устаревший алиас с предупреждением,
+          # а Helm 3 нового имени не знает), поэтому флаг выбирается по мажору helm на раннере: ubuntu-latest
+          # переезжает с Ubuntu 24.04 (Helm 3) на 26.04 (Helm 4) в ноябре 2026, встретятся оба. --wait указан
+          # явно: у Helm 4 голый --wait = стратегия watcher. Старые поды, получившие SIGTERM, ожидания не держат
+          # (readyReplicas считаются по новой ревизии), поэтому долгий дренаж деплой не задерживает.
+          HELM_WAIT=()
+          if [[ "${{ inputs.helm_atomic }}" == "true" ]]; then
+            HELM_MAJOR=$(helm version --template '{{.Version}}' | sed -E 's/^v?([0-9]+)\..*/\1/')
+            if [[ "$HELM_MAJOR" -ge 4 ]]; then ROLLBACK_FLAG="--rollback-on-failure"; else ROLLBACK_FLAG="--atomic"; fi
+            HELM_WAIT=("$ROLLBACK_FLAG" --wait --timeout "${{ inputs.helm_timeout }}")
+            echo "helm_atomic: helm v${HELM_MAJOR}: ${HELM_WAIT[*]}"
+          fi
+
           VALUES_FILE="deploy/values${{ inputs.image_suffix }}.yaml"
           # --history-max 3: Helm хранит каждую ревизию релиза секретом (по умолчанию 10 на релиз). 2026-10-17 в
           # кластере было 334 таких секрета, 22 МиБ, и API-сервер DOKS держит их все в памяти; на откат хватает трёх.
@@ -552,7 +675,7 @@ jobs:
             # Источник истины — файл; input params при этом игнорируются.
             # Монорепо: файл на сервис — deploy/values<image_suffix>.yaml.
             echo "$VALUES_FILE найден — деплой через -f (input params игнорируются)"
-            helm upgrade ${{ inputs.app_name }} oci://zot.pushka.biz/charts/${{ inputs.helm_chart }} --version "${{ inputs.chart_version }}" -i --history-max 3 -f "$VALUES_FILE" --set app.image=${IMAGE_REF}
+            helm upgrade ${{ inputs.app_name }} oci://zot.pushka.biz/charts/${{ inputs.helm_chart }} --version "${{ inputs.chart_version }}" -i --history-max 3 -f "$VALUES_FILE" --set app.image=${IMAGE_REF} "${HELM_WAIT[@]}"
 
             # Доп. релизы того же образа (воркеры в отдельных подах): deploy/release<image_suffix>.<имя>.yaml.
             # <имя> из имени файла = имя helm-релиза = app.name внутри файла (по нему же идёт рестарт
@@ -563,7 +686,7 @@ jobs:
               name=$(basename "$f" .yaml)
               name=${name#release${{ inputs.image_suffix }}.}
               echo "$f найден — доп. релиз $name того же образа"
-              helm upgrade "$name" oci://zot.pushka.biz/charts/${{ inputs.helm_chart }} --version "${{ inputs.chart_version }}" -i --history-max 3 -f "$f" --set app.image=${IMAGE_REF}
+              helm upgrade "$name" oci://zot.pushka.biz/charts/${{ inputs.helm_chart }} --version "${{ inputs.chart_version }}" -i --history-max 3 -f "$f" --set app.image=${IMAGE_REF} "${HELM_WAIT[@]}"
               if [[ -n "$NEED_RESTART" ]]; then
                 kubectl rollout restart deployment "$name"
               fi
@@ -573,12 +696,48 @@ jobs:
             FULL_PARAMS="${{ needs.prepare-k8s.outputs.helm_params }} --set app.image=${IMAGE_REF}"
             echo "Full Params for Helm: $FULL_PARAMS"
 
-            helm upgrade ${{ inputs.app_name }} oci://zot.pushka.biz/charts/${{ inputs.helm_chart }} --version "${{ inputs.chart_version }}" -i --history-max 3 $FULL_PARAMS
+            helm upgrade ${{ inputs.app_name }} oci://zot.pushka.biz/charts/${{ inputs.helm_chart }} --version "${{ inputs.chart_version }}" -i --history-max 3 $FULL_PARAMS "${HELM_WAIT[@]}"
           fi
 
           if [[ -n "$NEED_RESTART" ]]; then
             kubectl rollout restart deployment ${{ inputs.app_name }}
           fi
+
+      # Якорь отката: после УСПЕШНОГО helm upgrade ставим тег :deployed на задеплоенный digest (при провале или откате
+      # шаг не выполняется, и :deployed остаётся на прежнем digest — того, что работает в кластере). Это копия
+      # манифеста внутри реестра без загрузки слоёв: `imagetools create` с одним источником и --prefer-index=false —
+      # побайтовая копия, digest не меняется. Контекст — в шаге Anchor deployed image в prepare-k8s.
+      - name: Login to Container Registry (якорь отката)
+        if: ${{ inputs.helm_atomic }}
+        continue-on-error: true
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ secrets.REGISTRY_NAME }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Pin deployed image as :deployed (якорь отката)
+        id: pin_anchor
+        if: ${{ inputs.helm_atomic }}
+        env:
+          REPO_REF: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}
+          DIGEST: ${{ needs.build-docker.outputs.image_digest }}
+        run: |
+          if [[ -z "$DIGEST" ]]; then
+            echo "::warning::digest пуст (деплой шёл по :latest) — якорь :deployed не ставим"
+            exit 0
+          fi
+          for attempt in 1 2 3; do
+            if docker buildx imagetools create --prefer-index=false --tag "${REPO_REF}:deployed" "${REPO_REF}@${DIGEST}"; then
+              echo "якорь :deployed → ${DIGEST}"
+              exit 0
+            fi
+            sleep $((attempt * 3))
+          done
+          # Деплой уже прошёл и жив, поэтому провал якоря — не красный деплой: шаг помечает его выходом, а Telegram
+          # добавляет предупреждение (образ держится только тегом latest до следующей сборки).
+          echo "::warning::не удалось поставить тег :deployed на ${DIGEST}"
+          echo "failed=true" >> "$GITHUB_OUTPUT"
 
       - name: Calculate duration
         id: duration
@@ -705,7 +864,16 @@ jobs:
         if: ${{ needs.build-docker.outputs.validation_error == '' && (needs.build-docker.result == 'failure' || needs.prepare-k8s.result == 'failure' || needs.deploy.result == 'failure') }}
         env:
           COMMIT_HTML: ${{ steps.commit_info.outputs.html }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          HELM_ATOMIC: ${{ inputs.helm_atomic }}
         run: |
+          # Пояснение под «Failed Step» при helm_atomic: упавший релиз откатывается на прежнюю ревизию, то есть
+          # релиз не сменился (без helm_atomic helm не ждёт подов и этой строки нет).
+          NOTE=""
+          if [[ "$HELM_ATOMIC" == "true" && "$DEPLOY_RESULT" == "failure" ]]; then
+            NOTE=$'\n'"↩️ <i>helm atomic: упавший релиз откатывается на прежнюю ревизию (helm history).</i>"
+          fi
+
           MESSAGE="🔴 <b>DEPLOYMENT FAILED</b> · <code>${{ inputs.app_name }}</code>
 
           👤 <b>Author:</b> <code>${{ github.actor }}</code>
@@ -718,7 +886,7 @@ jobs:
 
           ────────────────────
           ❌ <b>Failed Step:</b>
-          <code>${{ steps.failed_step.outputs.step }}</code>
+          <code>${{ steps.failed_step.outputs.step }}</code>${NOTE}
 
           ────────────────────
           🔗 <a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">View Logs</a>"
@@ -733,7 +901,15 @@ jobs:
         if: ${{ needs.deploy.result == 'success' }}
         env:
           COMMIT_HTML: ${{ steps.commit_info.outputs.html }}
+          PIN_FAILED: ${{ needs.deploy.outputs.pin_failed }}
         run: |
+          # Якорь отката не поставлен: деплой жив, но образ держится только тегом latest, и если следующая выкатка
+          # упадёт или откатится, он потеряет тег (пустой выход — якорь поставлен или helm_atomic выключен).
+          PIN_NOTE=""
+          if [[ "$PIN_FAILED" == "true" ]]; then
+            PIN_NOTE=$'\n\n'"⚠️ <b>Якорь отката :deployed не поставлен</b> — образ держится только тегом latest: если следующая выкатка упадёт или откатится, он потеряет тег, и zot удалит его через 1–25 ч"
+          fi
+
           MESSAGE="🟢 <b>DEPLOY SUCCESSFUL</b> · <code>${{ inputs.app_name }}</code>
 
           👤 <b>Author:</b> <code>${{ github.actor }}</code>
@@ -750,7 +926,7 @@ jobs:
           ├ ☸️ Prepare: <code>${{ needs.prepare-k8s.outputs.duration }}</code>
           └ 📤 Deploy: <code>${{ needs.deploy.outputs.duration }}</code>
 
-          🔗 <a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">View Action Run</a>"
+          🔗 <a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">View Action Run</a>${PIN_NOTE}"
           
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
             --data-urlencode "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
