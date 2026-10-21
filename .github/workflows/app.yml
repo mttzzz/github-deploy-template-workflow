@@ -136,6 +136,19 @@ on:
         type: string
         default: '15m'
 
+      # Переиспользование работающего образа (opt-in). Сервис монорепо собирается из корня, и широкий фильтр путей
+      # (общий лок-файл, корневой package.json, общие пакеты) запускает выкатку от правок, которые его образ не
+      # меняют. Вызывающий считает отпечаток входов образа (у ai.pushka.biz — scripts/docker/image-inputs-hash.ts);
+      # если тот же отпечаток стоит меткой `deploy.inputs-hash` на образе под :deployed, сборка пропускается и
+      # выкатывается тот же digest: helm upgrade с тем же образом и values под не трогает. Иначе образ собирается
+      # как обычно и получает эту метку. Нужен якорь :deployed — поэтому только вместе с helm_atomic, и только
+      # build_mode=docker. Пустой вход — прежнее поведение.
+      inputs_hash:
+        description: 'Отпечаток входов образа (считает вызывающий). Совпал с меткой deploy.inputs-hash образа :deployed — сборка пропускается, выкатывается тот же digest. Только с helm_atomic=true и build_mode=docker.'
+        required: false
+        type: string
+        default: ''
+
     secrets:
       HELM_REPO:
         required: true
@@ -187,16 +200,32 @@ jobs:
       # secrets.REGISTRY_NAME (GitHub зануляет любой output со значением секрета).
       # Ретрай-шаги идут в цепочке ПОСЛЕ своей первой попытки: если та упала на пуше, digest
       # несёт повтор. Пустой output ложен для `||`, поэтому побеждает первый непустой.
-      image_digest: ${{ steps.push_docker.outputs.digest || steps.push_docker_retry.outputs.digest || steps.push_host.outputs.digest || steps.push_host_retry.outputs.digest }}
+      # Переиспользованный образ (inputs_hash совпал с :deployed) — первым: сборки тогда не было.
+      image_digest: ${{ steps.reuse.outputs.digest || steps.push_docker.outputs.digest || steps.push_docker_retry.outputs.digest || steps.push_host.outputs.digest || steps.push_host_retry.outputs.digest }}
+      image_reused: ${{ steps.reuse.outputs.hit }}
       duration: ${{ steps.duration.outputs.time }}
       validation_error: ${{ steps.validate.outputs.error }}
     steps:
       - name: Validate required parameters
         id: validate
+        env:
+          INPUTS_HASH: ${{ inputs.inputs_hash }}
         run: |
           ERRORS=""
           if [[ "${{ inputs.with_submodules }}" == "true" && -z "${{ secrets.GIT_TOKEN }}" ]]; then
             ERRORS="${ERRORS}❌ with_submodules=true, но GIT_TOKEN не передан\n"
+          fi
+          # Значение входа — через env, а не подстановкой в текст скрипта: строка вызывающего не исполняется.
+          if [[ -n "$INPUTS_HASH" ]]; then
+            if [[ ! "$INPUTS_HASH" =~ ^[0-9a-f]{64}$ ]]; then
+              ERRORS="${ERRORS}❌ inputs_hash должен быть sha256 в hex (64 символа)\n"
+            fi
+            if [[ "${{ inputs.helm_atomic }}" != "true" ]]; then
+              ERRORS="${ERRORS}❌ inputs_hash требует helm_atomic=true: без якоря :deployed сравнивать не с чем\n"
+            fi
+            if [[ "${{ inputs.build_mode }}" == "host" ]]; then
+              ERRORS="${ERRORS}❌ inputs_hash поддержан только для build_mode=docker\n"
+            fi
           fi
           if [[ -n "$ERRORS" ]]; then
             echo "error<<EOF" >> $GITHUB_OUTPUT
@@ -249,6 +278,39 @@ jobs:
         if: inputs.build_mode != 'host'
         uses: docker/setup-buildx-action@v4
 
+      # Тот же отпечаток входов, что у образа под :deployed, — образ уже собран и работает: сборку пропускаем и
+      # выкатываем его digest. Любая неудача чтения (нет :deployed, нет метки, реестр не ответил) — обычная сборка:
+      # ошибка здесь стоит лишней пересборки, а не пропущенной выкатки. :latest перевешивается на тот же digest
+      # (копия манифеста в реестре, без слоёв): по нему дорожки синхронизируют образ с продом.
+      - name: Reuse deployed image (inputs_hash)
+        id: reuse
+        if: inputs.inputs_hash != '' && inputs.build_mode != 'host'
+        env:
+          REF: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}
+          WANT: ${{ inputs.inputs_hash }}
+        run: |
+          if ! image=$(docker buildx imagetools inspect "${REF}:deployed" --format '{{json .Image}}' 2>&1); then
+            echo "::notice:::deployed не прочитан — собираю образ: ${image}"
+            exit 0
+          fi
+          # Индекс с аттестацией отдаёт одну конфигурацию образа, иначе — карту по платформам: берём первую
+          # непустую метку (все платформы одной сборки несут одну).
+          have=$(jq -r 'if type == "object" and has("config") then (.config.Labels["deploy.inputs-hash"] // "") else ([.[]? | .config?.Labels?["deploy.inputs-hash"] // empty] | first // "") end' <<<"$image" 2>/dev/null || true)
+          if [[ "$have" != "$WANT" ]]; then
+            echo "отпечаток входов изменился (было ${have:-нет метки}, стало ${WANT}) — собираю образ"
+            exit 0
+          fi
+          if ! digest=$(docker buildx imagetools inspect "${REF}:deployed" --format '{{json .Manifest}}' | jq -er '.digest'); then
+            echo "::notice::digest :deployed не прочитан — собираю образ"
+            exit 0
+          fi
+          echo "входы образа не изменились: выкатываю работающий ${digest} без сборки"
+          if ! docker buildx imagetools create --prefer-index=false --tag "${REF}:latest" "${REF}@${digest}"; then
+            echo "::warning:::latest не перевешен на ${digest}: синхронизация дорожек возьмёт прошлую сборку"
+          fi
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "hit=true" >> "$GITHUB_OUTPUT"
+
       # host-режим: builder создаётся мгновенно, а его буст (pull buildkit-образа +
       # старт контейнера, ~8-9s) идёт в фоне параллельно с bun install / build:host.
       # build-push-action подхватит текущий builder; если буст ещё идёт — дождётся.
@@ -280,7 +342,7 @@ jobs:
       # Слои уже в кэше, повтор стоит секунды. Цена — настоящий сбой сборки прогоняется дважды.
       - name: Build and push Docker image
         id: push_docker
-        if: inputs.build_mode != 'host'
+        if: inputs.build_mode != 'host' && steps.reuse.outputs.hit != 'true'
         continue-on-error: true
         uses: docker/build-push-action@v7
         with:
@@ -288,7 +350,10 @@ jobs:
           file: ${{ inputs.dockerfile }}
           push: true
           tags: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}:latest
-          labels: ${{ steps.meta.outputs.labels }}
+          # Метка отпечатка входов: по ней следующая выкатка узнаёт, что образ можно не пересобирать (шаг reuse).
+          labels: |
+            ${{ steps.meta.outputs.labels }}
+            ${{ inputs.inputs_hash != '' && format('deploy.inputs-hash={0}', inputs.inputs_hash) || '' }}
           build-args: |
             ${{ secrets.BUILD_ARGS }}
             SENTRY_RELEASE=${{ github.sha }}
@@ -309,7 +374,9 @@ jobs:
           file: ${{ inputs.dockerfile }}
           push: true
           tags: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}:latest
-          labels: ${{ steps.meta.outputs.labels }}
+          labels: |
+            ${{ steps.meta.outputs.labels }}
+            ${{ inputs.inputs_hash != '' && format('deploy.inputs-hash={0}', inputs.inputs_hash) || '' }}
           build-args: |
             ${{ secrets.BUILD_ARGS }}
             SENTRY_RELEASE=${{ github.sha }}
@@ -756,8 +823,10 @@ jobs:
   # не передан или нет sentry_project/app_name.
   # Для Nuxt-проектов часть этого уже делает sentryVitePlugin на build — повтор безвреден (idempotent API).
   sentry-finalize:
-    needs: [deploy]
-    if: ${{ inputs.sentry_finalize && needs.deploy.result == 'success' }}
+    needs: [deploy, build-docker]
+    # Образ переиспользован (inputs_hash совпал) — новой сборки не было, значит и релиза Sentry для этого SHA нет:
+    # создавать пустой релиз и архивировать прежние незачем.
+    if: ${{ inputs.sentry_finalize && needs.deploy.result == 'success' && needs.build-docker.outputs.image_reused != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (для sentry-cli releases set-commits --auto — нужен локальный .git)
@@ -902,12 +971,19 @@ jobs:
         env:
           COMMIT_HTML: ${{ steps.commit_info.outputs.html }}
           PIN_FAILED: ${{ needs.deploy.outputs.pin_failed }}
+          IMAGE_REUSED: ${{ needs.build-docker.outputs.image_reused }}
         run: |
           # Якорь отката не поставлен: деплой жив, но образ держится только тегом latest, и если следующая выкатка
           # упадёт или откатится, он потеряет тег (пустой выход — якорь поставлен или helm_atomic выключен).
           PIN_NOTE=""
           if [[ "$PIN_FAILED" == "true" ]]; then
             PIN_NOTE=$'\n\n'"⚠️ <b>Якорь отката :deployed не поставлен</b> — образ держится только тегом latest: если следующая выкатка упадёт или откатится, он потеряет тег, и zot удалит его через 1–25 ч"
+          fi
+          # Входы образа не изменились (inputs_hash): выкачен работающий digest, поды не перезапускались, если не
+          # менялись values.
+          REUSE_NOTE=""
+          if [[ "$IMAGE_REUSED" == "true" ]]; then
+            REUSE_NOTE=$'\n\n'"♻️ <b>Образ не пересобирался</b> — входы те же, что у работающего; поды перезапускаются только при смене values"
           fi
 
           MESSAGE="🟢 <b>DEPLOY SUCCESSFUL</b> · <code>${{ inputs.app_name }}</code>
@@ -926,7 +1002,7 @@ jobs:
           ├ ☸️ Prepare: <code>${{ needs.prepare-k8s.outputs.duration }}</code>
           └ 📤 Deploy: <code>${{ needs.deploy.outputs.duration }}</code>
 
-          🔗 <a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">View Action Run</a>${PIN_NOTE}"
+          🔗 <a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">View Action Run</a>${REUSE_NOTE}${PIN_NOTE}"
           
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
             --data-urlencode "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
