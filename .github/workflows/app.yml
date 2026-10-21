@@ -48,13 +48,15 @@ on:
         required: false
         type: string
         default: 'docker'
-      # Только для build_mode=host: версия Bun, которой раннер ставит зависимости и собирает .output.
-      # Рантайм образа пинует свою (FROM в Dockerfile.host / базе), а `latest` резолвится в момент
+      # Версия Bun, которой шаблон исполняет Bun на раннере: build_mode=host — установка зависимостей и сборка .output;
+      # отпечаток входов (inputs_hash_script) — скрипт и его пробная установка зависимостей той же командой, что в
+      # Dockerfile. Рантайм образа пинует свою (FROM в Dockerfile / Dockerfile.host / базе), а `latest` резолвится в момент
       # сборки: в день релиза Bun сборка шла бы новой версией, исполнение — старой, и смена версии
-      # приезжала бы в прод без коммита в репо. Репо с пином передаёт ту же X.Y.Z, что в образе.
+      # приезжала бы в прод без коммита в репо; пробная установка другой версией могла бы поставить не то дерево, что в
+      # образе. Репо с пином передаёт ту же X.Y.Z, что в образе.
       # Default `latest` — прежнее поведение для репо, которые версию не пинуют.
       bun_version:
-        description: 'Версия Bun для build_mode=host (bun-version у setup-bun): точная X.Y.Z, как у рантайма образа. Default latest.'
+        description: 'Версия Bun для build_mode=host и для скрипта отпечатка входов inputs_hash_script (bun-version у setup-bun): точная X.Y.Z, как у рантайма образа. Default latest.'
         required: false
         type: string
         default: 'latest'
@@ -138,16 +140,26 @@ on:
 
       # Переиспользование работающего образа (opt-in). Сервис монорепо собирается из корня, и широкий фильтр путей
       # (общий лок-файл, корневой package.json, общие пакеты) запускает выкатку от правок, которые его образ не
-      # меняют. Вызывающий считает отпечаток входов образа (у ai.pushka.biz — scripts/docker/image-inputs-hash.ts);
-      # если тот же отпечаток стоит меткой `deploy.inputs-hash` на образе под :deployed, сборка пропускается и
-      # выкатывается тот же digest: helm upgrade с тем же образом и values под не трогает. Иначе образ собирается
-      # как обычно и получает эту метку. Нужен якорь :deployed — поэтому только вместе с helm_atomic, и только
-      # build_mode=docker. Пустой вход — прежнее поведение.
-      inputs_hash:
-        description: 'Отпечаток входов образа (считает вызывающий). Совпал с меткой deploy.inputs-hash образа :deployed — сборка пропускается, выкатывается тот же digest. Только с helm_atomic=true и build_mode=docker.'
+      # меняют. Отпечаток входов образа считает сам шаблон шагом job build-docker — на том же checkout и по тому же
+      # Dockerfile, что и сборка, скриптом вызывающего (у ai.pushka.biz — scripts/docker/image-inputs-hash.ts): отдельный
+      # job вызывающего стоил бы минимум биллинговую минуту на КАЖДЫЙ запуск. Если тот же отпечаток стоит меткой
+      # `deploy.inputs-hash` на образе под :deployed, сборка пропускается и выкатывается тот же digest: helm upgrade с тем
+      # же образом и values под не трогает. Иначе образ собирается как обычно и получает эту метку. Нужен якорь
+      # :deployed — поэтому только вместе с helm_atomic, и только build_mode=docker. Пустой вход — прежнее поведение:
+      # шаги отпечатка не исполняются, метки нет.
+      inputs_hash_script:
+        description: 'Скрипт отпечатка входов образа (Bun, путь от корня репо): `bun <скрипт> --dockerfile <dockerfile> --context <docker_context> [--workflow <workflow вызывающего>]` печатает sha256 (hex), код выхода ≠ 0 — отказ. Совпал с меткой deploy.inputs-hash образа :deployed — сборка пропускается, выкатывается тот же digest. Только с helm_atomic=true и build_mode=docker; Bun — версии bun_version.'
         required: false
         type: string
         default: ''
+      # Отпечаток видит входы из git, а базовый образ по тегу, apt-пакеты и то, что сборка качает из сети, — нет: без
+      # пересборки они доезжают только с ближайшей правкой входов. Отпечаток при этом всё равно считается и уходит
+      # меткой в новую сборку — следующая выкатка с теми же входами переиспользует уже её.
+      force_rebuild:
+        description: 'Собрать образ заново даже при совпавшем отпечатке входов (inputs_hash_script); метка отпечатка ставится и на новую сборку.'
+        required: false
+        type: boolean
+        default: false
 
     secrets:
       HELM_REPO:
@@ -200,7 +212,7 @@ jobs:
       # secrets.REGISTRY_NAME (GitHub зануляет любой output со значением секрета).
       # Ретрай-шаги идут в цепочке ПОСЛЕ своей первой попытки: если та упала на пуше, digest
       # несёт повтор. Пустой output ложен для `||`, поэтому побеждает первый непустой.
-      # Переиспользованный образ (inputs_hash совпал с :deployed) — первым: сборки тогда не было.
+      # Переиспользованный образ (отпечаток входов совпал с меткой образа под :deployed) — первым: сборки тогда не было.
       image_digest: ${{ steps.reuse.outputs.hit == 'true' && steps.reuse.outputs.digest || steps.push_docker.outputs.digest || steps.push_docker_retry.outputs.digest || steps.push_host.outputs.digest || steps.push_host_retry.outputs.digest }}
       image_reused: ${{ steps.reuse.outputs.hit }}
       duration: ${{ steps.duration.outputs.time }}
@@ -209,22 +221,19 @@ jobs:
       - name: Validate required parameters
         id: validate
         env:
-          INPUTS_HASH: ${{ inputs.inputs_hash }}
+          INPUTS_HASH_SCRIPT: ${{ inputs.inputs_hash_script }}
         run: |
           ERRORS=""
           if [[ "${{ inputs.with_submodules }}" == "true" && -z "${{ secrets.GIT_TOKEN }}" ]]; then
             ERRORS="${ERRORS}❌ with_submodules=true, но GIT_TOKEN не передан\n"
           fi
           # Значение входа — через env, а не подстановкой в текст скрипта: строка вызывающего не исполняется.
-          if [[ -n "$INPUTS_HASH" ]]; then
-            if [[ ! "$INPUTS_HASH" =~ ^[0-9a-f]{64}$ ]]; then
-              ERRORS="${ERRORS}❌ inputs_hash должен быть sha256 в hex (64 символа)\n"
-            fi
+          if [[ -n "$INPUTS_HASH_SCRIPT" ]]; then
             if [[ "${{ inputs.helm_atomic }}" != "true" ]]; then
-              ERRORS="${ERRORS}❌ inputs_hash требует helm_atomic=true: без якоря :deployed сравнивать не с чем\n"
+              ERRORS="${ERRORS}❌ inputs_hash_script требует helm_atomic=true: без якоря :deployed сравнивать не с чем\n"
             fi
             if [[ "${{ inputs.build_mode }}" == "host" ]]; then
-              ERRORS="${ERRORS}❌ inputs_hash поддержан только для build_mode=docker\n"
+              ERRORS="${ERRORS}❌ inputs_hash_script поддержан только для build_mode=docker\n"
             fi
           fi
           if [[ -n "$ERRORS" ]]; then
@@ -278,16 +287,73 @@ jobs:
         if: inputs.build_mode != 'host'
         uses: docker/setup-buildx-action@v4
 
+      # Отпечаток входов образа (opt-in: inputs_hash_script) — на том же checkout и по тому же Dockerfile, что пойдут в
+      # сборку ниже. Отпечаток — оптимизация, а не условие выкатки: Bun не поставился, скрипт отказал или не уложился в
+      # потолок — выход пуст, шаг reuse пропускается, и образ собирается как обычно, без метки: ошибка стоит лишней
+      # сборки, а не пропущенной выкатки. При force_rebuild отпечаток тоже считается — он уходит меткой в новую сборку.
+      - name: Set up Bun (inputs hash)
+        if: inputs.inputs_hash_script != '' && inputs.build_mode != 'host'
+        continue-on-error: true
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ inputs.bun_version }}
+
+      - name: Inputs hash
+        id: inputs_hash
+        if: inputs.inputs_hash_script != '' && inputs.build_mode != 'host'
+        continue-on-error: true
+        # Повисший реестр в пробной установке не держит выкатку (у скрипта ai.pushka.biz свой потолок — 3 минуты).
+        timeout-minutes: 4
+        env:
+          SCRIPT: ${{ inputs.inputs_hash_script }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          CONTEXT: ${{ inputs.docker_context }}
+          FORCE_REBUILD: ${{ inputs.force_rebuild }}
+          # Контекст github в reusable workflow принадлежит вызывающему (документация GitHub, «Reuse workflows»):
+          # workflow_ref — <владелец>/<репо>/<путь его workflow>@<ref>.
+          CALLER_REF: ${{ github.workflow_ref }}
+        run: |
+          # Вызов шаблона в workflow вызывающего (пин, входы) — тоже вход сборки: правка входа шаблона меняет образ.
+          # Workflow не найден или скрипт его не принял — отпечаток без него: менее точный (правка вызова шаблона
+          # образ тогда не пересоберёт), но переиспользование работает.
+          caller="${CALLER_REF#"${GITHUB_REPOSITORY}/"}"
+          caller="${caller%%@*}"
+          args=(--dockerfile "$DOCKERFILE" --context "$CONTEXT")
+          hash=""
+          if [[ -f "$caller" ]]; then
+            echo "workflow вызывающего: ${caller}"
+            if ! hash=$(bun "$SCRIPT" "${args[@]}" --workflow "$caller" --explain); then
+              hash=""
+              echo "::notice::отпечаток с workflow ${caller} не посчитан — считаю без него (менее точно: правка вызова шаблона образ не пересоберёт)"
+            fi
+          else
+            echo "::notice::workflow вызывающего (${CALLER_REF}) в checkout не найден — считаю отпечаток без него (менее точно: правка вызова шаблона образ не пересоберёт)"
+          fi
+          if [[ -z "$hash" ]] && ! hash=$(bun "$SCRIPT" "${args[@]}" --explain); then
+            echo "::warning::отпечаток входов не посчитан — образ собирается как обычно, без метки отпечатка"
+            exit 1
+          fi
+          if [[ ! "$hash" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::warning::скрипт отпечатка напечатал не sha256 в hex (${hash:0:100}) — образ собирается как обычно, без метки"
+            exit 1
+          fi
+          echo "отпечаток входов образа: ${hash}"
+          if [[ "$FORCE_REBUILD" == "true" ]]; then
+            echo "force_rebuild: образ собирается заново и при совпавшем отпечатке, отпечаток уходит меткой в новую сборку"
+          fi
+          echo "hash=${hash}" >> "$GITHUB_OUTPUT"
+
       # Тот же отпечаток входов, что у образа под :deployed, — образ уже собран и работает: сборку пропускаем и
       # выкатываем его digest. Любая неудача чтения (нет :deployed, нет метки, реестр не ответил) — обычная сборка:
       # ошибка здесь стоит лишней пересборки, а не пропущенной выкатки. :latest перевешивается на тот же digest
-      # (копия манифеста в реестре, без слоёв): по нему дорожки синхронизируют образ с продом.
-      - name: Reuse deployed image (inputs_hash)
+      # (копия манифеста в реестре, без слоёв): по нему дорожки синхронизируют образ с продом. При force_rebuild шаг
+      # пропускается: образ собирается заново при любом отпечатке.
+      - name: Reuse deployed image (inputs hash)
         id: reuse
-        if: inputs.inputs_hash != '' && inputs.build_mode != 'host'
+        if: inputs.build_mode != 'host' && inputs.force_rebuild != true && steps.inputs_hash.outputs.hash != ''
         env:
           REF: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}
-          WANT: ${{ inputs.inputs_hash }}
+          WANT: ${{ steps.inputs_hash.outputs.hash }}
           BUILD_ARGS: ${{ secrets.BUILD_ARGS }}
         run: |
           # BUILD_ARGS идут в сборку, но в отпечаток входов НЕ входят: при непустых значениях образ не переиспользуем.
@@ -335,14 +401,15 @@ jobs:
           docker buildx create --name host-packer --use > /dev/null
           nohup docker buildx inspect --bootstrap > /dev/null 2>&1 &
 
-      # Метка отпечатка входов образа. При пустом inputs_hash выход ПУСТ, и образ получает ровно те же метки,
-      # что и раньше: чужие проекты на @master (десять) ничего не замечают. Метка идёт через inputs metadata-action
-      # отдельной строкой, а не дописывается к его выводу: пустая строка метки («Invalid label ''») уронила бы
-      # сборку всем, кто отпечатка не передаёт.
+      # Метка отпечатка входов образа: по ней следующая выкатка узнаёт, что образ можно не пересобирать (шаг reuse);
+      # ставится и при force_rebuild. Без отпечатка (inputs_hash_script не задан или отпечаток не посчитан) выход ПУСТ, и
+      # образ получает ровно те же метки, что и раньше: чужие проекты на @master ничего не замечают. Метка идёт через
+      # inputs metadata-action отдельной строкой, а не дописывается к его выводу: пустая строка метки («Invalid label ''»)
+      # уронила бы сборку всем, у кого отпечатка нет.
       - name: Метка отпечатка входов
         id: extra_label
         env:
-          WANT: ${{ inputs.inputs_hash }}
+          WANT: ${{ steps.inputs_hash.outputs.hash }}
         run: |
           if [ -n "$WANT" ]; then
             echo "value=deploy.inputs-hash=$WANT" >> "$GITHUB_OUTPUT"
@@ -849,7 +916,7 @@ jobs:
   # Для Nuxt-проектов часть этого уже делает sentryVitePlugin на build — повтор безвреден (idempotent API).
   sentry-finalize:
     needs: [deploy, build-docker]
-    # Образ переиспользован (inputs_hash совпал) — новой сборки не было, значит и релиза Sentry для этого SHA нет:
+    # Образ переиспользован (отпечаток входов совпал) — новой сборки не было, значит и релиза Sentry для этого SHA нет:
     # создавать пустой релиз и архивировать прежние незачем.
     if: ${{ inputs.sentry_finalize && needs.deploy.result == 'success' && needs.build-docker.outputs.image_reused != 'true' }}
     runs-on: ubuntu-latest
@@ -1004,7 +1071,7 @@ jobs:
           if [[ "$PIN_FAILED" == "true" ]]; then
             PIN_NOTE=$'\n\n'"⚠️ <b>Якорь отката :deployed не поставлен</b> — образ держится только тегом latest: если следующая выкатка упадёт или откатится, он потеряет тег, и zot удалит его через 1–25 ч"
           fi
-          # Входы образа не изменились (inputs_hash): выкачен работающий digest, поды не перезапускались, если не
+          # Входы образа не изменились (отпечаток совпал с :deployed): выкачен работающий digest, поды не перезапускались, если не
           # менялись values.
           REUSE_NOTE=""
           if [[ "$IMAGE_REUSED" == "true" ]]; then
