@@ -1,0 +1,39 @@
+name: expr-probe
+# Одноразовая проверка выражения GH-Expressions: как склеиваются метки образа в шаблоне app.yml.
+# Пустой inputs_hash должен дать БАЙТ В БАЙТ прежние метки (без пустой строки метки), непустой — метку
+# deploy.inputs-hash на отдельной строке.
+on:
+  workflow_dispatch:
+    inputs:
+      h:
+        description: 'отпечаток входов (пусто — как у чужих проектов)'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: probe
+          labels: |
+            org.opencontainers.image.title=probe
+            org.opencontainers.image.revision=deadbeef
+
+      - name: Compose labels (как в app.yml)
+        id: compose
+        env:
+          META: ${{ steps.meta.outputs.labels }}
+          COMPOSED: ${{ steps.meta.outputs.labels }}${{ inputs.h != '' && format('\ndeploy.inputs-hash={0}', inputs.h) || '' }}
+        run: |
+          {
+            echo "META=[$META]"
+            echo "COMPOSED=[$COMPOSED]"
+            echo "--- байты COMPOSED:"
+            printf '%s' "$COMPOSED" | od -c | head -8
+            echo "--- строк в COMPOSED: $(printf '%s' "$COMPOSED" | wc -l), байт: $(printf '%s' "$COMPOSED" | wc -c), байт в META: $(printf '%s' "$META" | wc -c)"
+          } >> "$GITHUB_STEP_SUMMARY"
