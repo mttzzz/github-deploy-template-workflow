@@ -201,7 +201,7 @@ jobs:
       # Ретрай-шаги идут в цепочке ПОСЛЕ своей первой попытки: если та упала на пуше, digest
       # несёт повтор. Пустой output ложен для `||`, поэтому побеждает первый непустой.
       # Переиспользованный образ (inputs_hash совпал с :deployed) — первым: сборки тогда не было.
-      image_digest: ${{ steps.reuse.outputs.digest || steps.push_docker.outputs.digest || steps.push_docker_retry.outputs.digest || steps.push_host.outputs.digest || steps.push_host_retry.outputs.digest }}
+      image_digest: ${{ steps.reuse.outputs.hit == 'true' && steps.reuse.outputs.digest || steps.push_docker.outputs.digest || steps.push_docker_retry.outputs.digest || steps.push_host.outputs.digest || steps.push_host_retry.outputs.digest }}
       image_reused: ${{ steps.reuse.outputs.hit }}
       duration: ${{ steps.duration.outputs.time }}
       validation_error: ${{ steps.validate.outputs.error }}
@@ -288,21 +288,35 @@ jobs:
         env:
           REF: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}
           WANT: ${{ inputs.inputs_hash }}
+          BUILD_ARGS: ${{ secrets.BUILD_ARGS }}
         run: |
-          if ! image=$(docker buildx imagetools inspect "${REF}:deployed" --format '{{json .Image}}' 2>&1); then
-            echo "::notice:::deployed не прочитан — собираю образ: ${image}"
+          # BUILD_ARGS идут в сборку, но в отпечаток входов НЕ входят: при непустых значениях образ не переиспользуем.
+          if [[ -n "$BUILD_ARGS" ]]; then
+            echo "::notice::BUILD_ARGS заданы — их значения в отпечаток не входят, собираю образ"
+            exit 0
+          fi
+          # Digest и образ читаем ОДИН раз по digest: два запроса к изменяемому тегу :deployed могли бы разойтись
+          # (между ними тег перевешивает другая группа очереди), а stderr buildx не должен мешать разбору JSON.
+          if ! digest=$(docker buildx imagetools inspect "${REF}:deployed" --format '{{json .Manifest}}' 2>/tmp/reuse.err | jq -er '.digest'); then
+            echo "::notice::digest :deployed не прочитан — собираю образ: $(head -c 200 /tmp/reuse.err)"
+            exit 0
+          fi
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::notice::digest :deployed непохож на digest — собираю образ: ${digest}"
+            exit 0
+          fi
+          if ! image=$(docker buildx imagetools inspect "${REF}@${digest}" --format '{{json .Image}}' 2>/tmp/reuse.err); then
+            echo "::notice::${digest} не прочитан — собираю образ: $(head -c 200 /tmp/reuse.err)"
             exit 0
           fi
           # Метка ищется на любой глубине вывода imagetools: форма этого вывода менялась между версиями buildx
           # (конфигурация образа прямо в .Image, карта по платформам, .single), и жёсткий путь .config.Labels дал бы
           # have="" всегда — reuse молча выключился бы, а выкатки шли бы как раньше. Нет метки — "" (обычная сборка).
           have=$(jq -r '[.. | objects | .["deploy.inputs-hash"]? // empty] | first // ""' <<<"$image" 2>/dev/null || true)
+          # Метка берётся с ТОГО ЖЕ digest, который выкатывается: так переиспользование не может взять образ,
+          # которого в кластере нет.
           if [[ "$have" != "$WANT" ]]; then
             echo "отпечаток входов изменился (было ${have:-нет метки}, стало ${WANT}) — собираю образ"
-            exit 0
-          fi
-          if ! digest=$(docker buildx imagetools inspect "${REF}:deployed" --format '{{json .Manifest}}' | jq -er '.digest'); then
-            echo "::notice::digest :deployed не прочитан — собираю образ"
             exit 0
           fi
           echo "входы образа не изменились: выкатываю работающий ${digest} без сборки"
