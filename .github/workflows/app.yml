@@ -293,9 +293,10 @@ jobs:
             echo "::notice:::deployed не прочитан — собираю образ: ${image}"
             exit 0
           fi
-          # Индекс с аттестацией отдаёт одну конфигурацию образа, иначе — карту по платформам: берём первую
-          # непустую метку (все платформы одной сборки несут одну).
-          have=$(jq -r 'if type == "object" and has("config") then (.config.Labels["deploy.inputs-hash"] // "") else ([.[]? | .config?.Labels?["deploy.inputs-hash"] // empty] | first // "") end' <<<"$image" 2>/dev/null || true)
+          # Метка ищется на любой глубине вывода imagetools: форма этого вывода менялась между версиями buildx
+          # (конфигурация образа прямо в .Image, карта по платформам, .single), и жёсткий путь .config.Labels дал бы
+          # have="" всегда — reuse молча выключился бы, а выкатки шли бы как раньше. Нет метки — "" (обычная сборка).
+          have=$(jq -r '[.. | objects | .["deploy.inputs-hash"]? // empty] | first // ""' <<<"$image" 2>/dev/null || true)
           if [[ "$have" != "$WANT" ]]; then
             echo "отпечаток входов изменился (было ${have:-нет метки}, стало ${WANT}) — собираю образ"
             exit 0
@@ -320,6 +321,19 @@ jobs:
           docker buildx create --name host-packer --use > /dev/null
           nohup docker buildx inspect --bootstrap > /dev/null 2>&1 &
 
+      # Метка отпечатка входов образа. При пустом inputs_hash выход ПУСТ, и образ получает ровно те же метки,
+      # что и раньше: чужие проекты на @master (десять) ничего не замечают. Метка идёт через inputs metadata-action
+      # отдельной строкой, а не дописывается к его выводу: пустая строка метки («Invalid label ''») уронила бы
+      # сборку всем, кто отпечатка не передаёт.
+      - name: Метка отпечатка входов
+        id: extra_label
+        env:
+          WANT: ${{ inputs.inputs_hash }}
+        run: |
+          if [ -n "$WANT" ]; then
+            echo "value=deploy.inputs-hash=$WANT" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Extract metadata (tags, labels) for Docker
         id: meta        
         uses: docker/metadata-action@v6
@@ -327,6 +341,7 @@ jobs:
           images: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}
           tags: |
            type=raw,value=latest
+          labels: ${{ steps.extra_label.outputs.value }}
 
       - name: Export Docker tag safely
         id: export_tag
@@ -351,9 +366,7 @@ jobs:
           push: true
           tags: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}:latest
           # Метка отпечатка входов: по ней следующая выкатка узнаёт, что образ можно не пересобирать (шаг reuse).
-          labels: |
-            ${{ steps.meta.outputs.labels }}
-            ${{ inputs.inputs_hash != '' && format('deploy.inputs-hash={0}', inputs.inputs_hash) || '' }}
+          labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             ${{ secrets.BUILD_ARGS }}
             SENTRY_RELEASE=${{ github.sha }}
@@ -374,9 +387,7 @@ jobs:
           file: ${{ inputs.dockerfile }}
           push: true
           tags: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}:latest
-          labels: |
-            ${{ steps.meta.outputs.labels }}
-            ${{ inputs.inputs_hash != '' && format('deploy.inputs-hash={0}', inputs.inputs_hash) || '' }}
+          labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             ${{ secrets.BUILD_ARGS }}
             SENTRY_RELEASE=${{ github.sha }}
