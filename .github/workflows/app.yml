@@ -161,6 +161,19 @@ on:
         type: boolean
         default: false
 
+      # Namespace релиза (opt-in). Пустой — namespace текущего контекста kubeconfig (default), прежнее поведение. Задан —
+      # prepare-k8s ставит его контексту kubeconfig, и все helm и kubectl шаблона (якорь отката, выкатка, доп. релизы,
+      # рестарт) работают в нём: job deploy получает тот же kubeconfig бандлом. Namespace шаблон НЕ создаёт: его вместе с
+      # метками Pod Security и сетевыми политиками заводит инфраструктура кластера, а выкатка в несуществующий namespace
+      # падает на prepare-k8s с понятной ошибкой, а не создаёт голый namespace без защиты. Перенос релиза в другой
+      # namespace — новая установка рядом со старой: релиз в прежнем namespace шаблон не трогает, его снимают руками
+      # (`helm uninstall <релиз> -n <прежний>`), когда вызывающие переключены на новый адрес.
+      namespace:
+        description: 'Namespace релиза: helm и kubectl шаблона работают в нём. Пустой — namespace контекста kubeconfig (default). Namespace должен существовать: шаблон его не создаёт.'
+        required: false
+        type: string
+        default: ''
+
     secrets:
       HELM_REPO:
         required: true
@@ -597,6 +610,24 @@ jobs:
           echo "Kubeconfig downloaded successfully"
           kubectl cluster-info
 
+      # Namespace релиза (вход namespace): контекст kubeconfig получает его здесь, до якоря отката и упаковки бандла, —
+      # тогда и kubectl этого job, и helm и kubectl в job deploy работают в нём без флага в каждой команде.
+      - name: Set release namespace
+        if: ${{ inputs.namespace != '' }}
+        env:
+          NS: ${{ inputs.namespace }}
+        run: |
+          if ! [[ "$NS" =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$ ]]; then
+            echo "::error::namespace '$NS' — не имя namespace Kubernetes (RFC 1123 label)"
+            exit 1
+          fi
+          if ! kubectl get namespace "$NS" > /dev/null; then
+            echo "::error::namespace $NS в кластере нет: его заводит инфраструктура (метки Pod Security, сетевые политики), шаблон не создаёт"
+            exit 1
+          fi
+          kubectl config set-context --current --namespace="$NS"
+          echo "namespace релиза: $(kubectl config view --minify -o jsonpath='{..namespace}')"
+
       - name: Install Helm
         # На GitHub-hosted раннерах helm предустановлен — качаем только если его нет
         # (самостоятельный раннер / урезанный образ). Экономит ~7s биллинга на прогон.
@@ -799,6 +830,8 @@ jobs:
           # output/param, содержащий ЗНАЧЕНИЕ secret, и helm_params уходит пустым (так ронялся прод).
           REPO_REF="${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}"
           DIGEST="${{ needs.build-docker.outputs.image_digest }}"
+          # Namespace выкатки — из контекста kubeconfig бандла (вход namespace, шаг Set release namespace в prepare-k8s).
+          echo "namespace: $(kubectl config view --minify -o jsonpath='{..namespace}' || true)"
 
           # Основной путь: ссылка по digest. Спека пода меняется каждый деплой → роллаут
           # стартует сам. Fallback на :latest + явный рестарт — если digest почему-то пуст
