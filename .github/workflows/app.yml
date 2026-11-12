@@ -161,6 +161,18 @@ on:
         type: boolean
         default: false
 
+      # Кэш слоёв в реестре рядом с образом (opt-in). Кэш GHA (type=gha) виден только внутри Actions, а тот же Dockerfile
+      # собирают и вне CI: ai.pushka.biz собирает образ omp-chat на машине разработчика на бампе харнеса, для смоука до мёржа,
+      # и без общего кэша каждая такая сборка холодная — гигабайты apt-слоёв заново. Со входом сборка пишет кэш ещё и в
+      # реестр, тегом `<образ>:buildcache` (type=registry, режим cache_mode), и читает его вместе с кэшем GHA; сборка вне
+      # CI берёт его `--cache-from type=registry,ref=<образ>:buildcache` и неизменные слои не пересобирает. Пустой вход —
+      # прежнее поведение: кэш только в GHA.
+      registry_cache:
+        description: 'Писать кэш слоёв ещё и в реестр, тегом <образ>:buildcache (type=registry, режим cache_mode), и читать его на сборке вместе с кэшем GHA: по нему тот же Dockerfile собирают вне CI (--cache-from). Только build_mode=docker.'
+        required: false
+        type: boolean
+        default: false
+
       # Namespace релиза (opt-in). Пустой — namespace текущего контекста kubeconfig (default), прежнее поведение. Задан —
       # prepare-k8s ставит его контексту kubeconfig, и все helm и kubectl шаблона (якорь отката, выкатка, доп. релизы,
       # рестарт) работают в нём: job deploy получает тот же kubeconfig бандлом. Namespace шаблон НЕ создаёт: его вместе с
@@ -248,6 +260,9 @@ jobs:
             if [[ "${{ inputs.build_mode }}" == "host" ]]; then
               ERRORS="${ERRORS}❌ inputs_hash_script поддержан только для build_mode=docker\n"
             fi
+          fi
+          if [[ "${{ inputs.registry_cache }}" == "true" && "${{ inputs.build_mode }}" == "host" ]]; then
+            ERRORS="${ERRORS}❌ registry_cache поддержан только для build_mode=docker\n"
           fi
           if [[ -n "$ERRORS" ]]; then
             echo "error<<EOF" >> $GITHUB_OUTPUT
@@ -469,8 +484,14 @@ jobs:
           # Замер 01.10: шаг сборки с попаданием 53–62 с, с промахом 297–309 с — держит его пуш
           # ~1 ГБ пересобранных слоёв (148 с), экспорт кэша (104–116 с) идёт параллельно пушу и
           # кончается раньше. Откат 0735fcb касался упаковки build_mode=host, этот шаг он снял заодно.
-          cache-from: type=gha,scope=${{ inputs.app_name }}
-          cache-to: type=gha,mode=${{ inputs.cache_mode }},scope=${{ inputs.app_name }}
+          # registry_cache: тот же кэш ещё и в реестре, тегом <образ>:buildcache, — его читают сборки вне CI. Без входа
+          # строка пуста, и build-push-action пустые строки списка пропускает: кэш только GHA, как раньше.
+          cache-from: |
+            type=gha,scope=${{ inputs.app_name }}
+            ${{ inputs.registry_cache && format('type=registry,ref={0}/{1}{2}:buildcache', secrets.REGISTRY_NAME, github.repository, inputs.image_suffix) || '' }}
+          cache-to: |
+            type=gha,mode=${{ inputs.cache_mode }},scope=${{ inputs.app_name }}
+            ${{ inputs.registry_cache && format('type=registry,ref={0}/{1}{2}:buildcache,mode={3},image-manifest=true,oci-mediatypes=true', secrets.REGISTRY_NAME, github.repository, inputs.image_suffix, inputs.cache_mode) || '' }}
 
       - name: Build and push Docker image (retry)
         id: push_docker_retry
@@ -485,8 +506,12 @@ jobs:
           build-args: |
             ${{ secrets.BUILD_ARGS }}
             SENTRY_RELEASE=${{ github.sha }}
-          cache-from: type=gha,scope=${{ inputs.app_name }}
-          cache-to: type=gha,mode=${{ inputs.cache_mode }},scope=${{ inputs.app_name }}
+          cache-from: |
+            type=gha,scope=${{ inputs.app_name }}
+            ${{ inputs.registry_cache && format('type=registry,ref={0}/{1}{2}:buildcache', secrets.REGISTRY_NAME, github.repository, inputs.image_suffix) || '' }}
+          cache-to: |
+            type=gha,mode=${{ inputs.cache_mode }},scope=${{ inputs.app_name }}
+            ${{ inputs.registry_cache && format('type=registry,ref={0}/{1}{2}:buildcache,mode={3},image-manifest=true,oci-mediatypes=true', secrets.REGISTRY_NAME, github.repository, inputs.image_suffix, inputs.cache_mode) || '' }}
 
       # === build_mode: host — build приложения на раннере, docker только пакует .output ===
       - name: Set up Bun
