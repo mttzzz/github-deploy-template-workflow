@@ -133,7 +133,7 @@ on:
         type: boolean
         default: false
       helm_timeout:
-        description: 'Потолок ожидания для helm_atomic (--timeout, Go-длительность) на КАЖДЫЙ helm upgrade деплоя; откат после провала ждёт готовности подов с тем же потолком. kubeconfig из prepare-k8s живёт 3600 с, поэтому сборка + 2 × helm_timeout на каждый релиз (ожидание и откат) должны в них укладываться: при 15m и одном релизе сборка может занять до 30 минут.'
+        description: 'Потолок ожидания для helm_atomic (--timeout, Go-длительность) на КАЖДЫЙ helm upgrade деплоя; откат после провала ждёт готовности подов с тем же потолком. kubeconfig job deploy выписывает себе сам при старте и живёт 3600 с (сборка в этот срок не входит), поэтому 2 × helm_timeout на каждый релиз (ожидание и откат) должны в нём укладываться: при 15m один релиз занимает до 30 минут из 60.'
         required: false
         type: string
         default: '15m'
@@ -174,8 +174,8 @@ on:
         default: false
 
       # Namespace релиза (opt-in). Пустой — namespace текущего контекста kubeconfig (default), прежнее поведение. Задан —
-      # prepare-k8s ставит его контексту kubeconfig, и все helm и kubectl шаблона (якорь отката, выкатка, доп. релизы,
-      # рестарт) работают в нём: job deploy получает тот же kubeconfig бандлом. Namespace шаблон НЕ создаёт: его вместе с
+      # prepare-k8s и deploy ставят его контексту своего kubeconfig (каждый выписывает его себе сам), и все helm и kubectl
+      # шаблона (якорь отката, выкатка, доп. релизы, рестарт) работают в нём. Namespace шаблон НЕ создаёт: его вместе с
       # метками Pod Security и сетевыми политиками заводит инфраструктура кластера, а выкатка в несуществующий namespace
       # падает на prepare-k8s с понятной ошибкой, а не создаёт голый namespace без защиты. Перенос релиза в другой
       # namespace — новая установка рядом со старой: релиз в прежнем namespace шаблон не трогает, его снимают руками
@@ -228,6 +228,13 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      # Запись о сборке (build record) docker/build-push-action кладёт в артефакт `<владелец>~<репо>~<id>.dockerbuild`, и в ней
+      # лежат ЗНАЧЕНИЯ build-args. В режиме docker BUILD_ARGS (секрет) идёт в build-args, поэтому с непустым BUILD_ARGS артефакт
+      # не создаётся: в публичном репозитории-потребителе его скачает любой вошедший в GitHub. Остальные записи живут сутки,
+      # а не 90 дней (запись читают сразу после сборки, из сводки job).
+      DOCKER_BUILD_RECORD_UPLOAD: ${{ inputs.build_mode == 'host' || secrets.BUILD_ARGS == '' }}
+      DOCKER_BUILD_RECORD_RETENTION_DAYS: 1
     outputs:
       docker_tag: ${{ steps.export_tag.outputs.tag }}
       # Digest только что запушенного образа. Деплой ссылается на образ по digest, а не по
@@ -604,7 +611,10 @@ jobs:
           DURATION=$((END_TIME - ${{ steps.start.outputs.time }}))
           echo "time=${DURATION}s" >> $GITHUB_OUTPUT
 
-  # Подготовка Kubernetes/Helm выполняется ПАРАЛЛЕЛЬНО со сборкой Docker образа
+  # Проверка кластера и якорь отката идут ПАРАЛЛЕЛЬНО со сборкой Docker образа. Учётные данные кластера и реестра между job НЕ
+  # передаются артефактом: артефакты workflow видны всем, кто видит репозиторий, а в публичном репозитории-потребителе — любому
+  # вошедшему в GitHub. Каждый job, которому нужен кластер или реестр, входит сам из секретов: prepare-k8s — для kubectl
+  # (namespace, якорь отката), deploy — для helm и kubectl выкатки.
   prepare-k8s:
     runs-on: ubuntu-latest
     outputs:
@@ -616,27 +626,36 @@ jobs:
         run: echo "time=$(date +%s)" >> $GITHUB_OUTPUT
 
       - name: Get kubeconfig via API (no doctl needed)
+        env:
+          DO_TOKEN: ${{ secrets.DO_TOKEN }}
         run: |
-          mkdir -p $HOME/.kube
-          
+          set -euo pipefail
+          mkdir -p "$HOME/.kube"
+
           # Получаем cluster ID
-          CLUSTER_ID=$(curl -s -X GET "https://api.digitalocean.com/v2/kubernetes/clusters" \
-            -H "Authorization: Bearer ${{ secrets.DO_TOKEN }}" \
-            -H "Content-Type: application/json" | jq -r '.kubernetes_clusters[] | select(.name=="main") | .id')
-          
+          CLUSTER_ID=$(curl -sS --fail --retry 3 --max-time 30 \
+            -H "Authorization: Bearer ${DO_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://api.digitalocean.com/v2/kubernetes/clusters" | jq -r '.kubernetes_clusters[]? | select(.name=="main") | .id')
+          if [[ -z "$CLUSTER_ID" ]]; then
+            echo "::error::кластер main не найден в DigitalOcean: DO_TOKEN не принят или не видит кластер"
+            exit 1
+          fi
           echo "Cluster ID: $CLUSTER_ID"
-          
+
           # Получаем kubeconfig с токеном (expiry 1 час = 3600 сек)
-          curl -s -X GET "https://api.digitalocean.com/v2/kubernetes/clusters/${CLUSTER_ID}/kubeconfig?expiry_seconds=3600" \
-            -H "Authorization: Bearer ${{ secrets.DO_TOKEN }}" \
-            > $HOME/.kube/config
-          
-          chmod 600 $HOME/.kube/config
+          curl -sS --fail --retry 3 --max-time 30 \
+            -H "Authorization: Bearer ${DO_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://api.digitalocean.com/v2/kubernetes/clusters/${CLUSTER_ID}/kubeconfig?expiry_seconds=3600" \
+            > "$HOME/.kube/config"
+
+          chmod 600 "$HOME/.kube/config"
           echo "Kubeconfig downloaded successfully"
           kubectl cluster-info
 
-      # Namespace релиза (вход namespace): контекст kubeconfig получает его здесь, до якоря отката и упаковки бандла, —
-      # тогда и kubectl этого job, и helm и kubectl в job deploy работают в нём без флага в каждой команде.
+      # Namespace релиза (вход namespace): контекст kubeconfig получает его здесь, до якоря отката, — тогда kubectl этого job
+      # работает в нём без флага в каждой команде. Job deploy выписывает себе свой kubeconfig и ставит этот namespace сам.
       - name: Set release namespace
         if: ${{ inputs.namespace != '' }}
         env:
@@ -652,16 +671,6 @@ jobs:
           fi
           kubectl config set-context --current --namespace="$NS"
           echo "namespace релиза: $(kubectl config view --minify -o jsonpath='{..namespace}')"
-
-      - name: Install Helm
-        # На GitHub-hosted раннерах helm предустановлен — качаем только если его нет
-        # (самостоятельный раннер / урезанный образ). Экономит ~7s биллинга на прогон.
-        run: command -v helm > /dev/null || curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-
-      - name: Login to OCI Registry (zot)
-        # Чарты — OCI-артефакты в zot; chartmuseum выведен из эксплуатации.
-        run: helm registry login zot.pushka.biz --username ${{ secrets.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_PASSWORD }}
-
 
       - name: Prepare Helm parameters
         id: prepare_params
@@ -795,22 +804,6 @@ jobs:
           echo "::error::не удалось поставить якорь :deployed на ${DIGEST}"
           exit 1
 
-      - name: Package k8s config for deploy
-        run: |
-          mkdir -p /tmp/k8s-bundle
-          cp -r $HOME/.kube /tmp/k8s-bundle/kube
-          cp -r $HOME/.config/helm /tmp/k8s-bundle/config-helm 2>/dev/null || true
-          cp -r $HOME/.cache/helm /tmp/k8s-bundle/cache-helm 2>/dev/null || true
-          echo "Bundle contents:"
-          ls -la /tmp/k8s-bundle/
-          
-      - name: Upload k8s bundle
-        uses: actions/upload-artifact@v7
-        with:
-          name: k8s-bundle
-          path: /tmp/k8s-bundle
-          retention-days: 1
-
       - name: Calculate duration
         id: duration
         run: |
@@ -818,7 +811,7 @@ jobs:
           DURATION=$((END_TIME - ${{ steps.start.outputs.time }}))
           echo "time=${DURATION}s" >> $GITHUB_OUTPUT
 
-  # Deploy теперь только скачивает артефакты и деплоит - максимально быстро!
+  # Deploy входит в кластер и в реестр чартов сам (учётные данные артефактом не передаются) и катит релиз.
   deploy:
     needs: [build-docker, prepare-k8s]
     runs-on: ubuntu-latest
@@ -834,19 +827,57 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Download k8s bundle
-        uses: actions/download-artifact@v8
-        with:
-          name: k8s-bundle
-          path: /tmp/k8s-bundle
-
-      - name: Restore k8s config
+      # Кластер и реестр чартов — со своими учётными данными job, из секретов. Раньше prepare-k8s упаковывал kubeconfig и
+      # ~/.config/helm (после `helm registry login` там лежит логин и пароль реестра) в артефакт k8s-bundle, а deploy его
+      # скачивал: в публичном репозитории-потребителе артефакт доступен любому вошедшему в GitHub. Теперь
+      # артефактов с учётными данными нет, а срок kubeconfig (3600 с) начинается здесь, а не на старте сборки.
+      - name: Get kubeconfig via API (no doctl needed)
+        env:
+          DO_TOKEN: ${{ secrets.DO_TOKEN }}
         run: |
-          cp -r /tmp/k8s-bundle/kube $HOME/.kube
-          chmod 600 $HOME/.kube/config
-          mkdir -p $HOME/.config $HOME/.cache
-          cp -r /tmp/k8s-bundle/config-helm $HOME/.config/helm 2>/dev/null || true
-          cp -r /tmp/k8s-bundle/cache-helm $HOME/.cache/helm 2>/dev/null || true
+          set -euo pipefail
+          mkdir -p "$HOME/.kube"
+
+          CLUSTER_ID=$(curl -sS --fail --retry 3 --max-time 30 \
+            -H "Authorization: Bearer ${DO_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://api.digitalocean.com/v2/kubernetes/clusters" | jq -r '.kubernetes_clusters[]? | select(.name=="main") | .id')
+          if [[ -z "$CLUSTER_ID" ]]; then
+            echo "::error::кластер main не найден в DigitalOcean: DO_TOKEN не принят или не видит кластер"
+            exit 1
+          fi
+
+          # Токен на 1 час (expiry 3600 сек): ожидание и откат helm (helm_timeout) укладываются в него.
+          curl -sS --fail --retry 3 --max-time 30 \
+            -H "Authorization: Bearer ${DO_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://api.digitalocean.com/v2/kubernetes/clusters/${CLUSTER_ID}/kubeconfig?expiry_seconds=3600" \
+            > "$HOME/.kube/config"
+
+          chmod 600 "$HOME/.kube/config"
+
+      # Namespace релиза (вход namespace): prepare-k8s уже проверил, что он есть; здесь его же получает контекст kubeconfig этого
+      # job, и helm и kubectl выкатки работают в нём без флага в каждой команде. Без этого `helm upgrade -i` поставил бы
+      # релиз в namespace по умолчанию, поэтому несовпадение — ошибка.
+      - name: Set release namespace
+        if: ${{ inputs.namespace != '' }}
+        env:
+          NS: ${{ inputs.namespace }}
+        run: |
+          kubectl config set-context --current --namespace="$NS"
+          have=$(kubectl config view --minify -o jsonpath='{..namespace}')
+          if [[ "$have" != "$NS" ]]; then
+            echo "::error::namespace контекста kubeconfig ('$have') не совпал со входом namespace ('$NS')"
+            exit 1
+          fi
+          echo "namespace релиза: $have"
+
+      - name: Login to OCI Registry (zot)
+        # Чарты — OCI-артефакты в zot; chartmuseum выведен из эксплуатации. Пароль — через stdin, а не в командной строке.
+        env:
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: printf '%s' "$REGISTRY_PASSWORD" | helm registry login zot.pushka.biz --username "$REGISTRY_USERNAME" --password-stdin
 
       - name: Deploy to Kubernetes with Helm
         run: |
@@ -855,7 +886,7 @@ jobs:
           # output/param, содержащий ЗНАЧЕНИЕ secret, и helm_params уходит пустым (так ронялся прод).
           REPO_REF="${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}"
           DIGEST="${{ needs.build-docker.outputs.image_digest }}"
-          # Namespace выкатки — из контекста kubeconfig бандла (вход namespace, шаг Set release namespace в prepare-k8s).
+          # Namespace выкатки — из контекста kubeconfig этого job (вход namespace, шаг Set release namespace выше).
           echo "namespace: $(kubectl config view --minify -o jsonpath='{..namespace}' || true)"
 
           # Основной путь: ссылка по digest. Спека пода меняется каждый деплой → роллаут
