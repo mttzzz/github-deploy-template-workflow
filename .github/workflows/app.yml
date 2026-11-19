@@ -277,7 +277,7 @@ jobs:
         run: echo "time=$(date +%s)" >> $GITHUB_OUTPUT
 
       - name: Checkout deploying repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: ${{ inputs.with_submodules }}
           fetch-depth: 1
@@ -530,7 +530,7 @@ jobs:
       # лок-файл: смена зависимостей инвалидирует кэш (Nuxt всё равно пересобрал бы всё).
       - name: Restore Nuxt build cache (host)
         if: inputs.build_mode == 'host' && inputs.build_cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: node_modules/.cache/nuxt
           key: nuxt-buildcache-${{ hashFiles('bun.lock') }}-${{ github.sha }}
@@ -832,7 +832,7 @@ jobs:
 
       # Checkout нужен для современного пути: deploy/values.yaml из репо приложения.
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Download k8s bundle
         uses: actions/download-artifact@v8
@@ -980,7 +980,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (для sentry-cli releases set-commits --auto — нужен локальный .git)
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Finalize + archive prior Sentry releases
