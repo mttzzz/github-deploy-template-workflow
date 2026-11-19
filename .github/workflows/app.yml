@@ -284,7 +284,7 @@ jobs:
         run: echo "time=$(date +%s)" >> $GITHUB_OUTPUT
 
       - name: Checkout deploying repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           submodules: ${{ inputs.with_submodules }}
           fetch-depth: 1
@@ -305,14 +305,14 @@ jobs:
           fi
 
       - name: Log in to Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@v4.8.0
         with:
           registry: ${{ secrets.REGISTRY_NAME}}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v4
+        uses: docker/login-action@v4.8.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -320,7 +320,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: inputs.build_mode != 'host'
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@v4.4.1
 
       # Отпечаток входов образа (opt-in: inputs_hash_script) — на том же checkout и по тому же Dockerfile, что пойдут в
       # сборку ниже. Отпечаток — оптимизация, а не условие выкатки: Bun не поставился, скрипт отказал или не уложился в
@@ -329,7 +329,7 @@ jobs:
       - name: Set up Bun (inputs hash)
         if: inputs.inputs_hash_script != '' && inputs.build_mode != 'host'
         continue-on-error: true
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@v2.2.0
         with:
           bun-version: ${{ inputs.bun_version }}
 
@@ -452,7 +452,7 @@ jobs:
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta        
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@v6.2.0
         with:
           images: ${{ secrets.REGISTRY_NAME }}/${{ github.repository }}${{ inputs.image_suffix }}
           tags: |
@@ -475,7 +475,7 @@ jobs:
         id: push_docker
         if: inputs.build_mode != 'host' && steps.reuse.outputs.hit != 'true'
         continue-on-error: true
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v7.4.0
         with:
           context: ${{ inputs.docker_context }}
           file: ${{ inputs.dockerfile }}
@@ -503,7 +503,7 @@ jobs:
       - name: Build and push Docker image (retry)
         id: push_docker_retry
         if: inputs.build_mode != 'host' && steps.push_docker.outcome == 'failure'
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v7.4.0
         with:
           context: ${{ inputs.docker_context }}
           file: ${{ inputs.dockerfile }}
@@ -523,7 +523,7 @@ jobs:
       # === build_mode: host — build приложения на раннере, docker только пакует .output ===
       - name: Set up Bun
         if: inputs.build_mode == 'host'
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@v2.2.0
         with:
           bun-version: ${{ inputs.bun_version }}
 
@@ -537,7 +537,7 @@ jobs:
       # лок-файл: смена зависимостей инвалидирует кэш (Nuxt всё равно пересобрал бы всё).
       - name: Restore Nuxt build cache (host)
         if: inputs.build_mode == 'host' && inputs.build_cache
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
           path: node_modules/.cache/nuxt
           key: nuxt-buildcache-${{ hashFiles('bun.lock') }}-${{ github.sha }}
@@ -567,7 +567,7 @@ jobs:
         id: push_host
         if: inputs.build_mode == 'host'
         continue-on-error: true
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v7.4.0
         with:
           context: .
           file: Dockerfile.host
@@ -580,7 +580,7 @@ jobs:
       - name: Package and push image (host, retry)
         id: push_host_retry
         if: inputs.build_mode == 'host' && steps.push_host.outcome == 'failure'
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v7.4.0
         with:
           context: .
           file: Dockerfile.host
@@ -729,7 +729,7 @@ jobs:
       # на сбое (после трёх попыток) шаг красный, а не молча переставляет якорь.
       - name: Login to Container Registry (якорь отката)
         if: ${{ inputs.helm_atomic }}
-        uses: docker/login-action@v4
+        uses: docker/login-action@v4.8.0
         with:
           registry: ${{ secrets.REGISTRY_NAME }}
           username: ${{ secrets.REGISTRY_USERNAME }}
@@ -825,7 +825,7 @@ jobs:
 
       # Checkout нужен для современного пути: deploy/values.yaml из репо приложения.
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       # Кластер и реестр чартов — со своими учётными данными job, из секретов. Раньше prepare-k8s упаковывал kubeconfig и
       # ~/.config/helm (после `helm registry login` там лежит логин и пароль реестра) в артефакт k8s-bundle, а deploy его
@@ -958,7 +958,7 @@ jobs:
       - name: Login to Container Registry (якорь отката)
         if: ${{ inputs.helm_atomic }}
         continue-on-error: true
-        uses: docker/login-action@v4
+        uses: docker/login-action@v4.8.0
         with:
           registry: ${{ secrets.REGISTRY_NAME }}
           username: ${{ secrets.REGISTRY_USERNAME }}
@@ -1011,7 +1011,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (для sentry-cli releases set-commits --auto — нужен локальный .git)
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
       - name: Finalize + archive prior Sentry releases
